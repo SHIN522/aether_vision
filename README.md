@@ -7,7 +7,7 @@ Aether Vision is a real-time, browser-based **AI Creative Vision & Holographic H
 ## 🚀 Key Features
 
 * **Gesture-Controlled Invisibility Cloak**: Form a closed boundary polygon using your fingers (both hands or single-hand gesture) to overlay a pre-captured empty background snapshot and make yourself "invisible".
-* **3D Hand Flick Shader Engine**: Rapidly push your hand forward (closer to the camera) or pull it backward (away from the camera) to dynamically cycle through visual effects.
+* **Pinch-to-Cycle Shaders**: Tap your index finger and thumb together in a pinch gesture to cycle through different visual effects instantly.
 * **5 Creative Visual Shaders**:
   * 👤 *Invisibility Cloak*: Real-time background replacement.
   * 🟢 *Matrix Code Rain*: Cascading digital green binary characters.
@@ -24,10 +24,9 @@ Aether Vision is a real-time, browser-based **AI Creative Vision & Holographic H
 
 | Action / Gesture | Trigger | Result |
 |---|---|---|
-| **Form Polygon** | Pinch Index & Thumb (1-hand / 2-hands) | Activates the tracking shape overlay |
+| **Form Polygon** | Extend Index & Thumb (1-hand / 2-hands) | Activates the tracking shape overlay |
 | **Close Polygon** | Fold hand into a **Fist** | Immediately closes/disables the active effect |
-| **Shift Effect Forward** | Flick hand **Forward** (Push toward camera) | Automatically switches to next visual shader |
-| **Shift Effect Backward** | Flick hand **Backward** (Pull away from camera) | Automatically switches to previous visual shader |
+| **Shift Effect** | Pinch Index & Thumb (Touch and release) | Automatically cycles to the next visual shader |
 
 ---
 

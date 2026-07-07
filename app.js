@@ -43,11 +43,8 @@ let drawOutline = true;
 let enableObjectDetection = true;
 let detectionThreshold = 0.3;
 
-// Flick Gesture State
-let handSizeHistory = [];
-let lastFlickTime = 0;
-const FLICK_COOLDOWN_MS = 650; 
-const FLICK_THRESHOLD = 0.04;  
+// Pinch Gesture State
+let isPinchLatched = false;
 let modeShiftMessage = "";
 let modeShiftMessageTime = 0;
 const effectsList = ["cloak", "matrix", "glitch", "thermal", "wireframe"];
@@ -734,6 +731,13 @@ function isIndexExtended(landmarks) {
   return getDistance(landmarks[8], wrist) > getDistance(landmarks[6], wrist);
 }
 
+// Check if index and thumb are pinching (touching)
+function isPinching(landmarks) {
+  const thumbTip = landmarks[4];
+  const indexTip = landmarks[8];
+  return getDistance(thumbTip, indexTip) < 0.035;
+}
+
 // Cycle active shader effect (direction: 1 = next, -1 = prev)
 function shiftEffect(direction) {
   let currentIndex = effectsList.indexOf(selectedEffect);
@@ -800,35 +804,27 @@ function startAppLoop() {
           }
         }
         
+        let anyHandIsPinching = false;
+        for (let i = 0; i < handResults.landmarks.length; i++) {
+          if (isPinching(handResults.landmarks[i])) {
+            anyHandIsPinching = true;
+          }
+        }
+
+        // Handle Pinch Latch to change effects
+        if (anyHandIsPinching) {
+          if (!isPinchLatched) {
+            shiftEffect(1); // Cycle to next effect
+            isPinchLatched = true;
+          }
+        } else {
+          isPinchLatched = false;
+        }
+
         // Only draw polygon if no hand is a fist and all hands have extended indexes
         if (!anyHandIsFist && allHandsActive) {
           const points = [];
           const l0 = handResults.landmarks[0];
-          
-          // Track hand size in screen space to detect depth/flick velocity
-          const wrist = l0[0];
-          const knuckle = l0[9];
-          const currentSize = Math.sqrt(Math.pow(wrist.x - knuckle.x, 2) + Math.pow(wrist.y - knuckle.y, 2));
-          
-          handSizeHistory.push(currentSize);
-          if (handSizeHistory.length > 8) {
-            handSizeHistory.shift();
-          }
-          
-          const now = performance.now();
-          if (handSizeHistory.length >= 8 && now - lastFlickTime > FLICK_COOLDOWN_MS) {
-            const sizeDiff = currentSize - handSizeHistory[0];
-            
-            if (sizeDiff > FLICK_THRESHOLD) {
-              // Flick Forward -> Next Effect
-              shiftEffect(1);
-              lastFlickTime = now;
-            } else if (sizeDiff < -FLICK_THRESHOLD) {
-              // Flick Backward -> Previous Effect
-              shiftEffect(-1);
-              lastFlickTime = now;
-            }
-          }
           
           if (handResults.landmarks.length >= 2) {
             // Two hands case: Get Index Tip (8) and Thumb Tip (4) from both hands
@@ -849,8 +845,8 @@ function startAppLoop() {
           handPolygon = points;
         }
       } else {
-        // Clear history if no hands detected
-        handSizeHistory = [];
+        // Reset pinch latch if no hands detected
+        isPinchLatched = false;
       }
     }
 
