@@ -216,6 +216,15 @@ async function startWebcam() {
 
 async function updateCameraList() {
   logDebug("Enumerating media input devices...");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+    logDebug("WARNING: navigator.mediaDevices.enumerateDevices is NOT supported in this context (insecure context or old browser).");
+    cameraSelect.innerHTML = "";
+    const option = document.createElement("option");
+    option.text = "Camera access unsupported";
+    option.value = "";
+    cameraSelect.appendChild(option);
+    return;
+  }
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videoDevices = devices.filter(device => device.kind === "videoinput");
@@ -1041,17 +1050,23 @@ function startAppLoop() {
 // INITIALIZATION ON DOCUMENT LOAD
 // ==========================================================================
 window.addEventListener("DOMContentLoaded", () => {
-  // Populate the camera select list on load
-  updateCameraList();
+  // Populate the camera select list on load safely
+  try {
+    updateCameraList();
+  } catch (e) {
+    console.error("Failed to update camera list:", e);
+  }
   
   // Wait for user gesture to activate the vision engine
-  btnStartApp.addEventListener("click", async () => {
-    btnStartApp.style.display = "none";
-    loaderSpinner.style.display = "block";
-    loaderText.textContent = "Initializing AI Neural Networks...";
-    
-    // Start camera feed and AI model initialization in parallel
-    await startWebcam();
-    await initAIModels();
-  });
+  if (btnStartApp) {
+    btnStartApp.addEventListener("click", async () => {
+      btnStartApp.style.display = "none";
+      loaderSpinner.style.display = "block";
+      loaderText.textContent = "Initializing AI Neural Networks...";
+      
+      // Start camera feed and AI model initialization in parallel
+      await startWebcam();
+      await initAIModels();
+    });
+  }
 });
