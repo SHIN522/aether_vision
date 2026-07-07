@@ -53,8 +53,11 @@
           
           <!-- Viewport Overlays -->
           <div class="viewport-loader" id="viewport-loader">
-            <div class="spinner"></div>
-            <p>Initializing AI Neural Networks...</p>
+            <div class="spinner" id="loader-spinner" style="display: none;"></div>
+            <p id="loader-text">AETHER VISION SYSTEM INACTIVE</p>
+            <button id="btn-start-app" class="primary-btn" style="padding: 12px 24px; font-size: 0.9rem; font-family: var(--font-hud); letter-spacing: 1px; margin-top: 10px;">
+              ACTIVATE CAMERA & AI ENGINE
+            </button>
           </div>
           
           <!-- Recording Indicator Overlay -->
@@ -204,6 +207,6 @@
   </div>
 
   <!-- Main JavaScript App -->
-  <script type="module" src="app.js?v=5"></script>
+  <script type="module" src="app.js?v=6"></script>
 </body>
 </html>

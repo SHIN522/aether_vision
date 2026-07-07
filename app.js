@@ -97,6 +97,9 @@ const videoDurationLabel = document.getElementById("video-duration");
 const muteBtn = document.getElementById("mute-btn");
 const cameraSelect = document.getElementById("camera-select");
 const cameraSelectContainer = document.getElementById("camera-select-container");
+const btnStartApp = document.getElementById("btn-start-app");
+const loaderSpinner = document.getElementById("loader-spinner");
+const loaderText = document.getElementById("loader-text");
 
 // ==========================================================================
 // ASYNC CORE MODELS LOADER
@@ -110,7 +113,7 @@ async function initAIModels() {
     // Initialize Hand Landmarker
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
-        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+        modelAssetPath: "./models/hand_landmarker.task",
         delegate: "GPU"
       },
       runningMode: "VIDEO",
@@ -121,7 +124,7 @@ async function initAIModels() {
     // Initialize Object Detector
     objectDetector = await ObjectDetector.createFromOptions(vision, {
       baseOptions: {
-        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite",
+        modelAssetPath: "./models/efficientdet_lite0.tflite",
         delegate: "GPU"
       },
       scoreThreshold: detectionThreshold,
@@ -1009,9 +1012,17 @@ function startAppLoop() {
 // INITIALIZATION ON DOCUMENT LOAD
 // ==========================================================================
 window.addEventListener("DOMContentLoaded", () => {
-  // Start webcam source
-  startWebcam();
+  // Populate the camera select list on load
+  updateCameraList();
   
-  // Load AI vision engines
-  initAIModels();
+  // Wait for user gesture to activate the vision engine
+  btnStartApp.addEventListener("click", async () => {
+    btnStartApp.style.display = "none";
+    loaderSpinner.style.display = "block";
+    loaderText.textContent = "Initializing AI Neural Networks...";
+    
+    // Start camera feed and AI model initialization in parallel
+    await startWebcam();
+    await initAIModels();
+  });
 });
