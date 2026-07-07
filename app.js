@@ -146,6 +146,12 @@ async function initAIModels() {
 // ==========================================================================
 async function startWebcam() {
   if (webcamStream) return;
+  
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    alert("Webcam APIs are NOT available. Please make sure you are accessing the app via http://localhost:8000 and NOT by double-clicking the index.html file (file:///), which blocks camera access.");
+    return;
+  }
+  
   try {
     const constraints = {
       video: {
@@ -171,7 +177,13 @@ async function startWebcam() {
     await updateCameraList();
   } catch (err) {
     console.error("Webcam access error:", err);
-    alert("Camera access is required for this application. Please enable it in browser settings.");
+    if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+      alert("Webcam permission denied. Please click the camera icon in your browser's address bar, choose 'Always Allow', and refresh the page.");
+    } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
+      alert("Your camera is already in use by another application (e.g. Zoom, Discord, OBS, Teams, or the Windows Camera App). Please close those applications and refresh the page.");
+    } else {
+      alert(`Webcam failed to start: ${err.message}. Check that the camera is plugged in and not blocked in system privacy settings.`);
+    }
   }
 }
 
