@@ -47,7 +47,7 @@ let detectionThreshold = 0.3;
 let isPinchLatched = false;
 let modeShiftMessage = "";
 let modeShiftMessageTime = 0;
-const effectsList = ["cloak", "matrix", "glitch", "thermal", "wireframe"];
+const effectsList = ["cloak", "duotone", "scan_grid", "thermal", "wireframe"];
 
 // Matrix Rain Effect State
 let matrixChars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ$+-*/=%#@&";
@@ -612,99 +612,27 @@ function applySobelFilter(srcCtx, destCtx, x, y, width, height) {
   destCtx.putImageData(edgeData, x, y);
 }
 
-// Chromatic Aberration Glitch Shader
-function applyGlitchFilter(srcCtx, destCtx, x, y, width, height) {
+// Neon Duotone Filter (Purple -> Cyan)
+function applyDuotoneFilter(srcCtx, destCtx, x, y, width, height) {
   const imgData = srcCtx.getImageData(x, y, width, height);
-  const tempCanvas = document.createElement("canvas");
-  tempCanvas.width = width;
-  tempCanvas.height = height;
-  const tempCtx = tempCanvas.getContext("2d");
-  tempCtx.putImageData(imgData, 0, 0);
-
-  destCtx.save();
-  destCtx.translate(x, y);
-
-  // Apply horizontal screen slices displacement (Glitch slices)
-  if (Math.random() < 0.15) {
-    const sliceCount = Math.floor(Math.random() * 4) + 1;
-    for (let i = 0; i < sliceCount; i++) {
-      const sy = Math.random() * height;
-      const sh = Math.random() * 30 + 5;
-      const dx = (Math.random() - 0.5) * 20;
-      destCtx.drawImage(tempCanvas, 0, sy, width, sh, dx, sy, width, sh);
-    }
-  } else {
-    destCtx.drawImage(tempCanvas, 0, 0);
-  }
-
-  // Draw offset color channels for chromatic aberration
-  destCtx.globalCompositeOperation = "screen";
+  const data = imgData.data;
   
-  // Shift Red
-  destCtx.globalAlpha = 0.8;
-  destCtx.drawImage(tempCanvas, -4, 0);
-  
-  // Shift Cyan (G+B)
-  destCtx.globalAlpha = 0.8;
-  destCtx.drawImage(tempCanvas, 4, 0);
-  
-  // Draw subtle digital static scanlines
-  destCtx.globalCompositeOperation = "source-over";
-  destCtx.fillStyle = "rgba(0, 242, 254, 0.08)";
-  for (let j = 0; j < height; j += 6) {
-    destCtx.fillRect(0, j, width, 2);
-  }
-  
-  destCtx.restore();
-}
-
-// Matrix Falling Code Rain Generator
-function drawMatrixEffect(destCtx, polygonPath) {
-  destCtx.save();
-  
-  // Create clipping boundary
-  destCtx.beginPath();
-  destCtx.moveTo(polygonPath[0].x, polygonPath[0].y);
-  for (let i = 1; i < polygonPath.length; i++) {
-    destCtx.lineTo(polygonPath[i].x, polygonPath[i].y);
-  }
-  destCtx.closePath();
-  destCtx.clip();
-
-  // Matrix BG
-  destCtx.fillStyle = "rgba(5, 8, 17, 0.15)";
-  destCtx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-
-  // Matrix green code text
-  destCtx.fillStyle = "rgba(0, 255, 100, 0.9)";
-  destCtx.font = `${matrixFontSize}px 'Space Grotesk'`;
-
-  // Draw code rain columns
-  for (let i = 0; i < matrixDrops.length; i++) {
-    const text = matrixChars[Math.floor(Math.random() * matrixChars.length)];
-    const x = i * matrixFontSize;
-    const y = matrixDrops[i];
-
-    // Glow effect
-    destCtx.shadowColor = "rgba(0, 255, 100, 0.8)";
-    destCtx.shadowBlur = 6;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i+1];
+    const b = data[i+2];
     
-    // Draw character
-    destCtx.fillText(text, x, y);
-
-    // Reset shadow
-    destCtx.shadowBlur = 0;
-
-    // Advance drop
-    matrixDrops[i] += matrixFontSize;
-
-    // Reset if it drops below screen or randomly resets
-    if (matrixDrops[i] > outputCanvas.height && Math.random() > 0.975) {
-      matrixDrops[i] = 0;
-    }
+    // Grayscale luminance
+    const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+    const ratio = luma / 255;
+    
+    // Deep Violet (15, 0, 30) to Neon Cyan (0, 242, 254)
+    data[i] = 15 * (1 - ratio);                         // Red
+    data[i+1] = 242 * ratio;                            // Green
+    data[i+2] = 30 * (1 - ratio) + 254 * ratio;         // Blue
   }
-
-  destCtx.restore();
+  
+  destCtx.putImageData(imgData, x, y);
 }
 
 // Helper for distance between two 3D landmarks
@@ -750,8 +678,8 @@ function shiftEffect(direction) {
   // Setup HUD alert
   const effectNames = {
     cloak: "INVISIBILITY CLOAK",
-    matrix: "MATRIX CODE RAIN",
-    glitch: "CHROMATIC GLITCH",
+    duotone: "NEON DUOTONE",
+    scan_grid: "CYBERPUNK SCAN GRID",
     thermal: "THERMAL HEATMAP",
     wireframe: "CYBERPUNK WIREFRAME"
   };
@@ -856,51 +784,83 @@ function startAppLoop() {
       ctx.save();
       ctx.globalAlpha = effectOpacity;
 
-      if (selectedEffect === "matrix") {
-        drawMatrixEffect(ctx, handPolygon);
-      } else {
-        // Canvas clipping to hand polygon path
-        ctx.beginPath();
-        ctx.moveTo(handPolygon[0].x, handPolygon[0].y);
-        for (let i = 1; i < handPolygon.length; i++) {
-          ctx.lineTo(handPolygon[i].x, handPolygon[i].y);
-        }
-        ctx.closePath();
-        ctx.clip();
+      // Canvas clipping to hand polygon path
+      ctx.beginPath();
+      ctx.moveTo(handPolygon[0].x, handPolygon[0].y);
+      for (let i = 1; i < handPolygon.length; i++) {
+        ctx.lineTo(handPolygon[i].x, handPolygon[i].y);
+      }
+      ctx.closePath();
+      ctx.clip();
 
-        // Apply selected visual shader
-        if (selectedEffect === "cloak") {
-          // Draw pre-captured background image
-          if (isBgCaptured) {
-            ctx.drawImage(backgroundCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-          } else {
-            // Draw visual notification text if background is not locked
-            ctx.fillStyle = "rgba(0, 242, 254, 0.05)";
-            ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-            ctx.fillStyle = "var(--accent-cyan)";
-            ctx.font = "16px 'Space Grotesk'";
-            ctx.textAlign = "center";
-            ctx.fillText("CAPTURE BACKGROUND TO ACTIVATE CLOAK", outputCanvas.width / 2, outputCanvas.height / 2);
-          }
-        } 
-        else if (selectedEffect === "thermal") {
-          // Render thermal effect via offscreen buffer for speed
-          offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-          applyThermalFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-          ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-        } 
-        else if (selectedEffect === "wireframe") {
-          // Render Sobel Wireframe filter
-          offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-          applySobelFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-          ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-        } 
-        else if (selectedEffect === "glitch") {
-          // Render chromatic aberration glitch
-          applyGlitchFilter(ctx, ctx, 0, 0, outputCanvas.width, outputCanvas.height);
+      // Apply selected visual shader
+      if (selectedEffect === "cloak") {
+        // Draw pre-captured background image
+        if (isBgCaptured) {
+          ctx.drawImage(backgroundCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+        } else {
+          // Draw visual notification text if background is not locked
+          ctx.fillStyle = "rgba(0, 242, 254, 0.05)";
+          ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+          ctx.fillStyle = "var(--accent-cyan)";
+          ctx.font = "16px 'Space Grotesk'";
+          ctx.textAlign = "center";
+          ctx.fillText("CAPTURE BACKGROUND TO ACTIVATE CLOAK", outputCanvas.width / 2, outputCanvas.height / 2);
         }
+      } 
+      else if (selectedEffect === "duotone") {
+        // Render duotone pop-art effect via offscreen buffer for speed
+        offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        applyDuotoneFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+      }
+      else if (selectedEffect === "scan_grid") {
+        // Draw desaturated, cyan tinted feed with scan grid and scrolling scanline
+        ctx.save();
+        ctx.filter = "grayscale(100%) brightness(0.9)";
+        ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
+        ctx.filter = "none";
+        
+        ctx.globalCompositeOperation = "color";
+        ctx.fillStyle = "rgba(0, 242, 254, 0.4)";
+        ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+        ctx.globalCompositeOperation = "source-over";
+        
+        // Draw digital Grid overlay
+        ctx.strokeStyle = "rgba(0, 242, 254, 0.15)";
+        ctx.lineWidth = 1;
+        const gridSize = 30;
+        ctx.beginPath();
+        for (let gx = 0; gx < outputCanvas.width; gx += gridSize) {
+          ctx.moveTo(gx, 0);
+          ctx.lineTo(gx, outputCanvas.height);
+        }
+        for (let gy = 0; gy < outputCanvas.height; gy += gridSize) {
+          ctx.moveTo(0, gy);
+          ctx.lineTo(outputCanvas.width, gy);
+        }
+        ctx.stroke();
+        
+        // Draw scrolling scanline beam
+        const scanlineY = (performance.now() / 4) % (outputCanvas.height + 100) - 50;
+        ctx.fillStyle = "rgba(0, 242, 254, 0.25)";
+        ctx.fillRect(0, scanlineY, outputCanvas.width, 3);
+        ctx.restore();
+      }
+      else if (selectedEffect === "thermal") {
+        // Render thermal effect via offscreen buffer for speed
+        offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        applyThermalFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+      } 
+      else if (selectedEffect === "wireframe") {
+        // Render Sobel Wireframe filter
+        offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        applySobelFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
       }
       ctx.restore();
+    }
 
       // Draw Glowing outline border
       if (drawOutline) {

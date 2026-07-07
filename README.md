@@ -10,8 +10,8 @@ Aether Vision is a real-time, browser-based **AI Creative Vision & Holographic H
 * **Pinch-to-Cycle Shaders**: Tap your index finger and thumb together in a pinch gesture to cycle through different visual effects instantly.
 * **5 Creative Visual Shaders**:
   * 👤 *Invisibility Cloak*: Real-time background replacement.
-  * 🟢 *Matrix Code Rain*: Cascading digital green binary characters.
-  * 📺 *Chromatic Glitch*: RGB channel separation, horizontal screen offsets, and digital static scanlines.
+  * 🎨 *Neon Duotone*: Deep violet to glowing neon-cyan pop-art gradient map.
+  * 📡 *Cyberpunk Scan Grid*: Cyan-tinted grayscale feed overlaid with a holographic scanning grid and moving scanline.
   * 🌡️ *Thermal Heatmap*: Infrared thermal vision simulation.
   * 🩻 *Cyberpunk Wireframe*: High-contrast Sobel edge-detection filter mapping outlines in neon cyan.
 * **Neural Object Tracking HUD**: Powered by Google's **EfficientDet Lite0** neural network to track everyday objects (e.g., humans) inside neon HUD bounding boxes with percentage confidence scores.
