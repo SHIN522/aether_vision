@@ -2,7 +2,7 @@ import {
   FilesetResolver,
   HandLandmarker,
   ObjectDetector
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.mjs";
+} from "./vision_bundle.mjs";
 
 // ==========================================================================
 // STATE VARIABLES
@@ -116,9 +116,9 @@ function logDebug(message) {
 async function initAIModels() {
   logDebug("Initializing AI Vision Engine...");
   try {
-    logDebug("Loading WebAssembly vision runtime from jsDelivr...");
+    logDebug("Loading WebAssembly vision runtime from local directory...");
     const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
+      "./wasm"
     );
     logDebug("WASM runtime loaded successfully.");
 
