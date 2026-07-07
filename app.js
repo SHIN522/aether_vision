@@ -2,7 +2,7 @@ import {
   FilesetResolver,
   HandLandmarker,
   ObjectDetector
-} from "./vision_bundle.mjs";
+} from "./vision_bundle.js";
 
 // ==========================================================================
 // STATE VARIABLES
