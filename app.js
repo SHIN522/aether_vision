@@ -913,7 +913,6 @@ function startAppLoop() {
         ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
       }
       ctx.restore();
-    }
 
       // Draw Glowing outline border
       if (drawOutline) {
