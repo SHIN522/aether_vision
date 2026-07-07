@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AETHER VISION | AI Invisibility & Creative Effects HUD</title>
+  <meta name="description" content="A real-time AI computer vision application featuring gesture-based invisibility cloaking, TouchDesigner-style video shaders, and neural object tracking.">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700&family=Space+Grotesk:wght@400;700&display=swap" rel="stylesheet">
+  
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Background grid animation -->
+    <div class="grid-overlay"></div>
+    
+    <!-- Top HUD Header -->
+    <header class="hud-header">
+      <div class="logo-area">
+        <span class="hud-tag">SYSTEM: ACTIVE</span>
+        <h1>AETHER // VISION</h1>
+      </div>
+      <div class="status-panel">
+        <div class="status-item" id="hand-status">
+          <span class="indicator red"></span> HAND TRACKING: OFFLINE
+        </div>
+        <div class="status-item" id="object-status">
+          <span class="indicator red"></span> OBJECT DETECTOR: OFFLINE
+        </div>
+        <div class="status-item" id="fps-counter">
+          FPS: --
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="hud-workspace">
+      <!-- Media Viewport -->
+      <section class="viewport-card">
+        <div class="canvas-container">
+          <!-- Main Output Canvas -->
+          <canvas id="output-canvas"></canvas>
+          
+          <!-- Hidden Helper Elements -->
+          <video id="webcam-video" autoplay playsinline muted style="display: none;"></video>
+          <video id="upload-video" loop muted playsinline style="display: none;"></video>
+          <canvas id="background-canvas" style="display: none;"></canvas>
+          
+          <!-- Viewport Overlays -->
+          <div class="viewport-loader" id="viewport-loader">
+            <div class="spinner"></div>
+            <p>Initializing AI Neural Networks...</p>
+          </div>
+          
+          <!-- Recording Indicator Overlay -->
+          <div class="recording-badge" id="recording-badge" style="display: none;">
+            <span class="rec-dot"></span>
+            <span id="recording-text">REC: OVERLAY</span>
+          </div>
+
+          <!-- Video Playback Controls (visible when using uploaded video) -->
+          <div class="video-playback-controls" id="video-playback-controls" style="display: none;">
+            <button class="icon-btn" id="play-pause-btn" title="Play/Pause">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+            <div class="progress-container">
+              <span id="video-time">0:00</span>
+              <input type="range" id="video-progress" min="0" max="100" value="0">
+              <span id="video-duration">0:00</span>
+            </div>
+            <button class="icon-btn" id="mute-btn" title="Mute/Unmute">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77zM3 9v6h4l5 5V4L7 9H3z"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Glassmorphic HUD Sidebar Controls -->
+      <section class="control-sidebar">
+        <!-- Input Selector Card -->
+        <div class="control-card">
+          <h3><span class="card-num">01</span> INPUT SOURCE</h3>
+          <div class="toggle-group">
+            <button class="toggle-btn active" id="btn-source-webcam">WEBCAM</button>
+            <button class="toggle-btn" id="btn-source-file">FILE UPLOAD</button>
+          </div>
+
+          <!-- Camera Selector Dropdown -->
+          <div class="select-wrapper" id="camera-select-container" style="margin-top: 12px;">
+            <select id="camera-select" class="hud-select">
+              <option value="">Detecting Webcams...</option>
+            </select>
+          </div>
+          
+          <div class="file-upload-zone" id="file-upload-zone" style="display: none;">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <p>Drag & Drop Video or click to browse</p>
+            <input type="file" id="video-file-input" accept="video/*" style="display: none;">
+          </div>
+        </div>
+
+        <!-- Invisibility Cloak Setup Card -->
+        <div class="control-card" id="card-cloak-controls">
+          <h3><span class="card-num">02</span> CLOAK SETUP</h3>
+          <p class="card-desc">Clear the frame, capture the background, then step in to enable invisibility.</p>
+          <div class="btn-grid">
+            <button class="primary-btn" id="btn-capture-bg">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>
+              CAPTURE BACKGROUND
+            </button>
+            <button class="secondary-btn" id="btn-reset-bg" disabled>
+              RESET BACKGROUND
+            </button>
+          </div>
+          <div class="bg-status" id="bg-status-text">
+            STATUS: BACKGROUND NOT CAPTURED
+          </div>
+        </div>
+
+        <!-- TouchDesigner Effects Selector Card -->
+        <div class="control-card">
+          <h3><span class="card-num">03</span> VISUAL EFFECT</h3>
+          <div class="select-wrapper">
+            <select id="effect-select" class="hud-select">
+              <option value="cloak">INVISIBILITY CLOAK</option>
+              <option value="matrix">MATRIX CODE RAIN</option>
+              <option value="glitch">CHROMATIC GLITCH</option>
+              <option value="thermal">THERMAL HEATMAP</option>
+              <option value="wireframe">CYBERPUNK WIREFRAME</option>
+            </select>
+          </div>
+          
+          <div class="slider-group">
+            <div class="slider-label">
+              <span>Effect Opacity</span>
+              <span id="opacity-val">100%</span>
+            </div>
+            <input type="range" id="effect-opacity" min="0" max="100" value="100">
+          </div>
+
+          <div class="toggle-control">
+            <label class="switch-label" for="toggle-outline">
+              <span>Draw Effect Outline</span>
+            </label>
+            <label class="switch">
+              <input type="checkbox" id="toggle-outline" checked>
+              <span class="slider round"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- AI Object Detection Card -->
+        <div class="control-card">
+          <h3><span class="card-num">04</span> AI OBJECT DETECTOR</h3>
+          <p class="card-desc">Toggle neural network tracking for real-time bounding boxes and labels.</p>
+          <div class="toggle-control">
+            <label class="switch-label" for="toggle-object-detection">
+              <span>Enable Object Detection</span>
+            </label>
+            <label class="switch">
+              <input type="checkbox" id="toggle-object-detection" checked>
+              <span class="slider round"></span>
+            </label>
+          </div>
+          <div class="slider-group" id="detector-threshold-group">
+            <div class="slider-label">
+              <span>Min Confidence Score</span>
+              <span id="threshold-val">30%</span>
+            </div>
+            <input type="range" id="detector-threshold" min="10" max="90" value="30">
+          </div>
+        </div>
+
+        <!-- Recorder Card -->
+        <div class="control-card">
+          <h3><span class="card-num">05</span> EXPORT RECORDING</h3>
+          <div class="recorder-toggle">
+            <label class="radio-container">Processed (With Effects)
+              <input type="radio" checked="checked" name="recording-type" value="processed">
+              <span class="checkmark"></span>
+            </label>
+            <label class="radio-container">Raw Feed
+              <input type="radio" name="recording-type" value="raw">
+              <span class="checkmark"></span>
+            </label>
+          </div>
+          <button class="record-btn" id="btn-record">
+            <svg class="record-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
+            START RECORDING
+          </button>
+        </div>
+      </section>
+    </main>
+    
+    <!-- Footer/Disclaimer -->
+    <footer class="hud-footer">
+      <p>AETHER // VISION ENGINE v1.2 // POWERED BY GOOGLE MEDIAPIPE & TENSORFLOW</p>
+    </footer>
+  </div>
+
+  <!-- Main JavaScript App -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>
