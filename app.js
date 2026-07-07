@@ -149,12 +149,12 @@ async function startWebcam() {
   try {
     const constraints = {
       video: {
-        width: 1280,
-        height: 720,
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
         frameRate: { ideal: 30 },
         deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined
       },
-      audio: true
+      audio: false
     };
     webcamStream = await navigator.mediaDevices.getUserMedia(constraints);
     webcamVideo.srcObject = webcamStream;
