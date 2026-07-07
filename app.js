@@ -47,7 +47,7 @@ let detectionThreshold = 0.3;
 let isPinchLatched = false;
 let modeShiftMessage = "";
 let modeShiftMessageTime = 0;
-const effectsList = ["cloak", "duotone", "scan_grid", "thermal", "wireframe"];
+const effectsList = ["cloak", "holo_glitch", "ascii_codex", "rgb_shift", "neon_pulse", "night_vision", "thermal", "wireframe"];
 
 // Matrix Rain Effect State
 let matrixChars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ$+-*/=%#@&";
@@ -665,27 +665,46 @@ function applySobelFilter(srcCtx, destCtx, x, y, width, height) {
   destCtx.putImageData(edgeData, x, y);
 }
 
-// Neon Duotone Filter (Purple -> Cyan)
-function applyDuotoneFilter(srcCtx, destCtx, x, y, width, height) {
+// Pure-JS RGB Shift Chromatic Aberration Filter
+function applyRGBShiftFilter(srcCtx, destCtx, x, y, width, height, shiftAmount) {
   const imgData = srcCtx.getImageData(x, y, width, height);
   const data = imgData.data;
+  const outData = new Uint8ClampedArray(data); // clone of source pixels
   
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i+1];
-    const b = data[i+2];
-    
-    // Grayscale luminance
-    const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-    const ratio = luma / 255;
-    
-    // Deep Violet (15, 0, 30) to Neon Cyan (0, 242, 254)
-    data[i] = 15 * (1 - ratio);                         // Red
-    data[i+1] = 242 * ratio;                            // Green
-    data[i+2] = 30 * (1 - ratio) + 254 * ratio;         // Blue
+  for (let cy = 0; cy < height; cy++) {
+    for (let cx = 0; cx < width; cx++) {
+      const idx = (cy * width + cx) * 4;
+      
+      // Shift Red channel to the left
+      const rx = Math.max(0, cx - shiftAmount);
+      const rIdx = (cy * width + rx) * 4;
+      data[idx] = outData[rIdx]; // Red
+      
+      // Shift Blue channel to the right
+      const bx = Math.min(width - 1, cx + shiftAmount);
+      const bIdx = (cy * width + bx) * 4;
+      data[idx+2] = outData[bIdx+2]; // Blue
+      
+      // Green (idx+1) and Alpha (idx+3) remain unchanged
+    }
   }
   
   destCtx.putImageData(imgData, x, y);
+}
+
+// Compute the geometric center of a polygon
+function getPolygonCentroid(vertices) {
+  if (!vertices || vertices.length === 0) return { x: 0, y: 0 };
+  let cx = 0;
+  let cy = 0;
+  vertices.forEach(pt => {
+    cx += pt.x;
+    cy += pt.y;
+  });
+  return {
+    x: cx / vertices.length,
+    y: cy / vertices.length
+  };
 }
 
 // Helper for distance between two 3D landmarks
@@ -861,43 +880,180 @@ function startAppLoop() {
           ctx.fillText("CAPTURE BACKGROUND TO ACTIVATE CLOAK", outputCanvas.width / 2, outputCanvas.height / 2);
         }
       } 
-      else if (selectedEffect === "duotone") {
-        // Render duotone pop-art effect via offscreen buffer for speed
-        offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-        applyDuotoneFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-        ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-      }
-      else if (selectedEffect === "scan_grid") {
-        // Draw desaturated, cyan tinted feed with scan grid and scrolling scanline
+      else if (selectedEffect === "holo_glitch") {
+        // Draw desaturated, cyan tinted hologram base
         ctx.save();
         ctx.filter = "grayscale(100%) brightness(0.9)";
         ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
         ctx.filter = "none";
         
         ctx.globalCompositeOperation = "color";
-        ctx.fillStyle = "rgba(0, 242, 254, 0.4)";
+        ctx.fillStyle = "rgba(0, 242, 254, 0.45)";
         ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
         ctx.globalCompositeOperation = "source-over";
         
-        // Draw digital Grid overlay
-        ctx.strokeStyle = "rgba(0, 242, 254, 0.15)";
-        ctx.lineWidth = 1;
-        const gridSize = 30;
+        // Random horizontal slice glitches
+        const now = performance.now();
+        if (Math.random() < 0.35) {
+          const numSlices = Math.floor(Math.random() * 4) + 2;
+          for (let s = 0; s < numSlices; s++) {
+            const sy = Math.random() * outputCanvas.height;
+            const sh = Math.random() * 35 + 8;
+            const disp = (Math.random() - 0.5) * 35; // displacement
+            ctx.drawImage(
+              outputCanvas, 
+              0, sy, outputCanvas.width, sh, 
+              disp, sy, outputCanvas.width, sh
+            );
+          }
+        }
+        
+        // Scroll scanline
+        ctx.strokeStyle = "rgba(0, 242, 254, 0.2)";
+        ctx.lineWidth = 1.5;
+        const scanY = (now / 3) % (outputCanvas.height + 100) - 50;
         ctx.beginPath();
-        for (let gx = 0; gx < outputCanvas.width; gx += gridSize) {
-          ctx.moveTo(gx, 0);
-          ctx.lineTo(gx, outputCanvas.height);
+        ctx.moveTo(0, scanY);
+        ctx.lineTo(outputCanvas.width, scanY);
+        ctx.stroke();
+        ctx.restore();
+      }
+      else if (selectedEffect === "ascii_codex") {
+        // Fill base with dark green-tinted background
+        ctx.fillStyle = "rgba(5, 12, 8, 0.95)";
+        ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+        
+        // Draw video downsampled onto offscreen canvas for fast pixel scanning
+        const sampleW = 60;
+        const sampleH = 45;
+        offscreenCtx.drawImage(activeVideo, 0, 0, sampleW, sampleH);
+        const imgData = offscreenCtx.getImageData(0, 0, sampleW, sampleH);
+        const pixels = imgData.data;
+        
+        // Draw matrix green/cyan ASCII symbols based on luma
+        ctx.font = "bold 9px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        
+        const cellW = outputCanvas.width / sampleW;
+        const cellH = outputCanvas.height / sampleH;
+        const chars = "@%#*+=-:. ";
+        
+        for (let sy = 0; sy < sampleH; sy += 2) { // step by 2 for spacing and speed
+          for (let sx = 0; sx < sampleW; sx++) {
+            const idx = (sy * sampleW + sx) * 4;
+            const r = pixels[idx];
+            const g = pixels[idx+1];
+            const b = pixels[idx+2];
+            
+            const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+            if (luma < 25) continue; // skip dark pixels
+            
+            const charIdx = Math.floor((luma / 255) * (chars.length - 1));
+            const char = chars[charIdx];
+            
+            const cx = sx * cellW + cellW / 2;
+            const cy = sy * cellH + cellH / 2;
+            
+            // Neon matrix green color with brightness mapping opacity
+            ctx.fillStyle = `rgba(0, 255, 140, ${luma / 255})`;
+            ctx.fillText(char, cx, cy);
+          }
         }
-        for (let gy = 0; gy < outputCanvas.height; gy += gridSize) {
-          ctx.moveTo(0, gy);
-          ctx.lineTo(outputCanvas.width, gy);
+      }
+      else if (selectedEffect === "rgb_shift") {
+        // Render shift using offscreen buffer and pure-JS filter
+        offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        const shiftVal = Math.floor(Math.sin(performance.now() / 120) * 8) + 4; // Sinusoidal shift 4-12px
+        applyRGBShiftFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height, shiftVal);
+        ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+      }
+      else if (selectedEffect === "neon_pulse") {
+        // High-contrast monochromatic stylized base
+        ctx.save();
+        ctx.filter = "grayscale(100%) contrast(160%) brightness(75%)";
+        ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
+        ctx.filter = "none";
+        
+        // Centroid wave rings
+        const centroid = getPolygonCentroid(handPolygon);
+        const now = performance.now() / 1000;
+        
+        ctx.lineWidth = 3;
+        ctx.shadowBlur = 10;
+        
+        // Render 3 pulsing rings with phase shifts
+        for (let r = 0; r < 3; r++) {
+          const phase = (now * 160 + r * 80) % 240;
+          const alpha = 1 - (phase / 240);
+          
+          // Cyan Ring
+          ctx.strokeStyle = `rgba(0, 242, 254, ${alpha * 0.75})`;
+          ctx.shadowColor = "rgba(0, 242, 254, 0.8)";
+          ctx.beginPath();
+          ctx.arc(centroid.x, centroid.y, phase, 0, Math.PI * 2);
+          ctx.stroke();
+          
+          // Magenta Ring (delayed phase offset)
+          ctx.strokeStyle = `rgba(255, 0, 128, ${alpha * 0.5})`;
+          ctx.shadowColor = "rgba(255, 0, 128, 0.8)";
+          ctx.beginPath();
+          ctx.arc(centroid.x, centroid.y, Math.max(0, phase - 25), 0, Math.PI * 2);
+          ctx.stroke();
         }
+        ctx.restore();
+      }
+      else if (selectedEffect === "night_vision") {
+        // Separated phosphor-green tint filter
+        ctx.save();
+        ctx.filter = "brightness(1.15) contrast(1.25) sepia(100%) hue-rotate(85deg) saturate(320%)";
+        ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
+        ctx.filter = "none";
+        
+        // Overlay digital noise
+        const staticData = offscreenCtx.createImageData(60, 45);
+        const pix = staticData.data;
+        for (let i = 0; i < pix.length; i += 4) {
+          const rand = Math.random() * 255;
+          pix[i] = rand;
+          pix[i+1] = rand;
+          pix[i+2] = rand;
+          pix[i+3] = 30; // low opacity static
+        }
+        offscreenCtx.putImageData(staticData, 0, 0);
+        ctx.globalCompositeOperation = "overlay";
+        ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+        ctx.globalCompositeOperation = "source-over";
+        
+        // Draw HUD targeting sights at centroid
+        const centroid = getPolygonCentroid(handPolygon);
+        ctx.strokeStyle = "rgba(50, 255, 50, 0.85)";
+        ctx.lineWidth = 1.5;
+        
+        // Reticle circles
+        ctx.beginPath();
+        ctx.arc(centroid.x, centroid.y, 25, 0, Math.PI * 2);
         ctx.stroke();
         
-        // Draw scrolling scanline beam
-        const scanlineY = (performance.now() / 4) % (outputCanvas.height + 100) - 50;
-        ctx.fillStyle = "rgba(0, 242, 254, 0.25)";
-        ctx.fillRect(0, scanlineY, outputCanvas.width, 3);
+        ctx.beginPath();
+        ctx.arc(centroid.x, centroid.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(50, 255, 50, 0.85)";
+        ctx.fill();
+        
+        // Crosshair ticks
+        ctx.beginPath();
+        ctx.moveTo(centroid.x - 38, centroid.y); ctx.lineTo(centroid.x - 12, centroid.y);
+        ctx.moveTo(centroid.x + 12, centroid.y); ctx.lineTo(centroid.x + 38, centroid.y);
+        ctx.moveTo(centroid.x, centroid.y - 38); ctx.lineTo(centroid.x, centroid.y - 12);
+        ctx.moveTo(centroid.x, centroid.y + 12); ctx.lineTo(centroid.x, centroid.y + 38);
+        ctx.stroke();
+        
+        // Cyber coordinates text overlays
+        ctx.fillStyle = "rgba(50, 255, 50, 0.85)";
+        ctx.font = "bold 9px monospace";
+        ctx.fillText("SYS_LOCK // WEBCAM_TRACK", centroid.x + 42, centroid.y - 15);
+        ctx.fillText(`X: ${Math.round(centroid.x)} | Y: ${Math.round(centroid.y)}`, centroid.x + 42, centroid.y - 3);
+        ctx.fillText("RADAR_SWEEP: ACTIVE", centroid.x + 42, centroid.y + 9);
         ctx.restore();
       }
       else if (selectedEffect === "thermal") {
