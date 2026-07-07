@@ -100,16 +100,29 @@ const cameraSelectContainer = document.getElementById("camera-select-container")
 const btnStartApp = document.getElementById("btn-start-app");
 const loaderSpinner = document.getElementById("loader-spinner");
 const loaderText = document.getElementById("loader-text");
+const debugLog = document.getElementById("debug-log");
+
+function logDebug(message) {
+  if (debugLog) {
+    debugLog.style.display = "block";
+    debugLog.innerHTML += `[${new Date().toLocaleTimeString()}] ${message}<br>`;
+  }
+  console.log(`[DEBUG] ${message}`);
+}
 
 // ==========================================================================
 // ASYNC CORE MODELS LOADER
 // ==========================================================================
 async function initAIModels() {
+  logDebug("Initializing AI Vision Engine...");
   try {
+    logDebug("Loading WebAssembly vision runtime from jsDelivr...");
     const vision = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
     );
+    logDebug("WASM runtime loaded successfully.");
 
+    logDebug("Loading local Hand Landmarker model (models/hand_landmarker.task)...");
     // Initialize Hand Landmarker
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
@@ -119,8 +132,10 @@ async function initAIModels() {
       runningMode: "VIDEO",
       numHands: 2
     });
+    logDebug("Hand Landmarker model loaded successfully.");
     handStatus.innerHTML = '<span class="indicator green"></span> HAND TRACKING: ACTIVE';
 
+    logDebug("Loading local Object Detector model (models/efficientdet_lite0.tflite)...");
     // Initialize Object Detector
     objectDetector = await ObjectDetector.createFromOptions(vision, {
       baseOptions: {
@@ -130,15 +145,18 @@ async function initAIModels() {
       scoreThreshold: detectionThreshold,
       runningMode: "VIDEO"
     });
+    logDebug("Object Detector model loaded successfully.");
     objectStatus.innerHTML = '<span class="indicator green"></span> OBJECT DETECTOR: ACTIVE';
 
     isModelsLoaded = true;
+    logDebug("All AI models loaded successfully.");
     viewportLoader.style.opacity = "0";
     setTimeout(() => viewportLoader.style.display = "none", 500);
 
     // Start video loop
     startAppLoop();
   } catch (error) {
+    logDebug(`CRITICAL ERROR during AI model load: ${error.name} - ${error.message}`);
     console.error("AI Models initialization failed:", error);
     viewportLoader.innerHTML = `<p style="color:var(--accent-red)">Model Load Error: Check internet connection.</p>`;
   }
@@ -150,7 +168,9 @@ async function initAIModels() {
 async function startWebcam() {
   if (webcamStream) return;
   
+  logDebug("Initializing webcam stream capture...");
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    logDebug("FAIL: Webcam APIs (navigator.mediaDevices.getUserMedia) are undefined in this context.");
     alert("Webcam APIs are NOT available. Please make sure you are accessing the app via http://localhost:8000 and NOT by double-clicking the index.html file (file:///), which blocks camera access.");
     return;
   }
@@ -165,12 +185,15 @@ async function startWebcam() {
       },
       audio: false
     };
+    logDebug("Requesting getUserMedia stream with video-only constraints...");
     webcamStream = await navigator.mediaDevices.getUserMedia(constraints);
+    logDebug("SUCCESS: Webcam stream captured successfully.");
     webcamVideo.srcObject = webcamStream;
     activeVideo = webcamVideo;
     
     // Wait for video meta to load
     webcamVideo.onloadedmetadata = () => {
+      logDebug(`Webcam resolution loaded: ${webcamVideo.videoWidth}x${webcamVideo.videoHeight}`);
       webcamVideo.play();
       isPlaying = true;
       adjustCanvasDimensions();
@@ -179,6 +202,7 @@ async function startWebcam() {
     // Refresh the camera list (this populates labels once permission is active)
     await updateCameraList();
   } catch (err) {
+    logDebug(`FAIL: webcam capture failed with error: ${err.name} - ${err.message}`);
     console.error("Webcam access error:", err);
     if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
       alert("Webcam permission denied. Please click the camera icon in your browser's address bar, choose 'Always Allow', and refresh the page.");
@@ -191,6 +215,7 @@ async function startWebcam() {
 }
 
 async function updateCameraList() {
+  logDebug("Enumerating media input devices...");
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videoDevices = devices.filter(device => device.kind === "videoinput");
@@ -199,6 +224,7 @@ async function updateCameraList() {
     cameraSelect.innerHTML = "";
     
     if (videoDevices.length === 0) {
+      logDebug("WARNING: No camera input devices found.");
       const option = document.createElement("option");
       option.text = "No cameras detected";
       option.value = "";
@@ -206,6 +232,7 @@ async function updateCameraList() {
       return;
     }
     
+    logDebug(`SUCCESS: Found ${videoDevices.length} camera(s) in system.`);
     videoDevices.forEach((device, index) => {
       const option = document.createElement("option");
       option.value = device.deviceId;
@@ -215,8 +242,10 @@ async function updateCameraList() {
         if (!selectedCameraId) selectedCameraId = device.deviceId;
       }
       cameraSelect.appendChild(option);
+      logDebug(` -> Camera ${index+1}: ${option.text} (${device.deviceId.substring(0,8)}...)`);
     });
   } catch (err) {
+    logDebug(`FAIL: enumerating input devices failed: ${err.name} - ${err.message}`);
     console.error("Error enumerating devices:", err);
   }
 }
