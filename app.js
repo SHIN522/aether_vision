@@ -45,6 +45,7 @@ let enableObjectDetection = false;
 let detectionThreshold = 0.3;
 let handPolygon = null;
 let lastObjectDetectionTime = 0;
+let isMlProcessing = false;
 
 // Pinch Gesture State
 let isPinchLatched = false;
@@ -69,11 +70,11 @@ const offscreenCtx = offscreenCanvas.getContext("2d");
 offscreenCanvas.width = 320;
 offscreenCanvas.height = 180;
 
-// High-performance ML tracking buffer (640x360)
+// High-performance ML tracking buffer (320x180)
 const detectionCanvas = document.createElement("canvas");
 const detectionCtx = detectionCanvas.getContext("2d");
-detectionCanvas.width = 640;
-detectionCanvas.height = 360;
+detectionCanvas.width = 320;
+detectionCanvas.height = 180;
 
 // ==========================================================================
 // UI ELEMENTS REFERENCE
@@ -1270,77 +1271,100 @@ function startAppLoop() {
       lastFpsUpdate = time;
     }
 
-    // 1. Draw live feed frame on output canvas
-    ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
-
     const timestamp = performance.now();
-    handPolygon = null;
 
-    // Draw video to downscaled detection canvas for high-performance ML tracking
-    detectionCtx.drawImage(activeVideo, 0, 0, 640, 360);
-
-    // 2. Perform Hand Tracking
-    if (handLandmarker && isModelsLoaded) {
-      const handResults = handLandmarker.detectForVideo(detectionCanvas, timestamp);
+    // 2. Perform Hand Tracking & Object Detection (Decoupled to run asynchronously and not block rendering)
+    if (!isMlProcessing && isModelsLoaded) {
+      isMlProcessing = true;
       
-      if (handResults.landmarks && handResults.landmarks.length > 0) {
-        let anyHandIsFist = false;
-        let allHandsActive = true;
-        
-        for (let i = 0; i < handResults.landmarks.length; i++) {
-          const l = handResults.landmarks[i];
-          if (isFist(l)) {
-            anyHandIsFist = true;
-          }
-          if (!isIndexExtended(l)) {
-            allHandsActive = false;
-          }
-        }
-        
-        let anyHandIsPinching = false;
-        for (let i = 0; i < handResults.landmarks.length; i++) {
-          if (isPinching(handResults.landmarks[i])) {
-            anyHandIsPinching = true;
-          }
-        }
-
-        // Handle Pinch Latch to change effects
-        if (anyHandIsPinching) {
-          if (!isPinchLatched) {
-            shiftEffect(1); // Cycle to next effect
-            isPinchLatched = true;
-          }
-        } else {
-          isPinchLatched = false;
-        }
-
-        // Only draw polygon if no hand is a fist and all hands have extended indexes
-        if (!anyHandIsFist && allHandsActive) {
-          const points = [];
-          const l0 = handResults.landmarks[0];
+      // Draw video to downscaled detection canvas for high-performance ML tracking
+      detectionCtx.drawImage(activeVideo, 0, 0, 320, 180);
+      
+      // Run MediaPipe inside setTimeout macro-task to let requestAnimationFrame draw the webcam frame first
+      setTimeout(() => {
+        try {
+          const timestamp = performance.now();
           
-          if (handResults.landmarks.length >= 2) {
-            // Two hands case: Get Index Tip (8) and Thumb Tip (4) from both hands
-            const l1 = handResults.landmarks[1];
-            
-            points.push({ x: l0[4].x * outputCanvas.width, y: l0[4].y * outputCanvas.height }); // Hand 1 Thumb
-            points.push({ x: l0[8].x * outputCanvas.width, y: l0[8].y * outputCanvas.height }); // Hand 1 Index
-            points.push({ x: l1[8].x * outputCanvas.width, y: l1[8].y * outputCanvas.height }); // Hand 2 Index
-            points.push({ x: l1[4].x * outputCanvas.width, y: l1[4].y * outputCanvas.height }); // Hand 2 Thumb
+          if (handLandmarker) {
+            const handResults = handLandmarker.detectForVideo(detectionCanvas, timestamp);
+            if (handResults.landmarks && handResults.landmarks.length > 0) {
+              let anyHandIsFist = false;
+              let allHandsActive = true;
+              
+              for (let i = 0; i < handResults.landmarks.length; i++) {
+                const l = handResults.landmarks[i];
+                if (isFist(l)) {
+                  anyHandIsFist = true;
+                }
+                if (!isIndexExtended(l)) {
+                  allHandsActive = false;
+                }
+              }
+              
+              let anyHandIsPinching = false;
+              for (let i = 0; i < handResults.landmarks.length; i++) {
+                if (isPinching(handResults.landmarks[i])) {
+                  anyHandIsPinching = true;
+                }
+              }
+
+              // Handle Pinch Latch to change effects
+              if (anyHandIsPinching) {
+                if (!isPinchLatched) {
+                  shiftEffect(1); // Cycle to next effect
+                  isPinchLatched = true;
+                }
+              } else {
+                isPinchLatched = false;
+              }
+
+              // Only update handPolygon if no hand is a fist and all indexes are active
+              if (!anyHandIsFist && allHandsActive) {
+                const points = [];
+                const l0 = handResults.landmarks[0];
+                
+                if (handResults.landmarks.length >= 2) {
+                  const l1 = handResults.landmarks[1];
+                  points.push({ x: l0[4].x * outputCanvas.width, y: l0[4].y * outputCanvas.height });
+                  points.push({ x: l0[8].x * outputCanvas.width, y: l0[8].y * outputCanvas.height });
+                  points.push({ x: l1[8].x * outputCanvas.width, y: l1[8].y * outputCanvas.height });
+                  points.push({ x: l1[4].x * outputCanvas.width, y: l1[4].y * outputCanvas.height });
+                } else {
+                  points.push({ x: l0[0].x * outputCanvas.width, y: l0[0].y * outputCanvas.height });
+                  points.push({ x: l0[4].x * outputCanvas.width, y: l0[4].y * outputCanvas.height });
+                  points.push({ x: l0[8].x * outputCanvas.width, y: l0[8].y * outputCanvas.height });
+                  points.push({ x: l0[20].x * outputCanvas.width, y: l0[20].y * outputCanvas.height });
+                }
+                handPolygon = points;
+              } else {
+                handPolygon = null;
+              }
+            } else {
+              isPinchLatched = false;
+              handPolygon = null;
+            }
+          }
+
+          // Perform AI Object Detection (Throttled for 60 FPS performance)
+          if (enableObjectDetection && objectDetector) {
+            if (timestamp - lastObjectDetectionTime > 150) {
+              lastObjectDetectionTime = timestamp;
+              try {
+                const detectResults = objectDetector.detectForVideo(detectionCanvas, timestamp);
+                activeDetections = detectResults.detections || [];
+              } catch (e) {
+                console.warn("Object detection skipped for frame: ", e);
+              }
+            }
           } else {
-            // One hand case: Gather Wrist (0), Thumb Tip (4), Index Tip (8), and Pinky Tip (20)
-            points.push({ x: l0[0].x * outputCanvas.width, y: l0[0].y * outputCanvas.height });   // Wrist
-            points.push({ x: l0[4].x * outputCanvas.width, y: l0[4].y * outputCanvas.height });   // Thumb
-            points.push({ x: l0[8].x * outputCanvas.width, y: l0[8].y * outputCanvas.height });   // Index
-            points.push({ x: l0[20].x * outputCanvas.width, y: l0[20].y * outputCanvas.height }); // Pinky
+            activeDetections = [];
           }
-          
-          handPolygon = points;
+        } catch (e) {
+          console.error("ML Inference error: ", e);
+        } finally {
+          isMlProcessing = false;
         }
-      } else {
-        // Reset pinch latch if no hands detected
-        isPinchLatched = false;
-      }
+      }, 0);
     }
 
     // 3. Render Hand-tracked visual effect (Full-screen ASCII Depth or 3D Layered Box HUD)
@@ -1494,79 +1518,65 @@ function startAppLoop() {
       }
     }
 
-    // 4. Perform AI Object Detection & HUD overlays (Throttled for 60 FPS performance)
-    if (enableObjectDetection && objectDetector && isModelsLoaded) {
-      if (timestamp - lastObjectDetectionTime > 120) {
-        lastObjectDetectionTime = timestamp;
-        try {
-          const detectResults = objectDetector.detectForVideo(detectionCanvas, timestamp);
-          activeDetections = detectResults.detections || [];
-        } catch (e) {
-          console.warn("Object detection skipped for frame: ", e);
+    // 4. Draw AI Object Detection HUD overlays from cached background tracking
+    if (enableObjectDetection && activeDetections.length > 0) {
+      activeDetections.forEach(det => {
+        const category = det.categories && det.categories[0];
+        if (!category) return;
+
+        const label = category.categoryName;
+        const score = Math.round(category.score * 100);
+        const box = det.boundingBox;
+
+        if (box) {
+          // Draw neon bounding box with HUD corners
+          ctx.save();
+          ctx.strokeStyle = "var(--accent-cyan)";
+          ctx.lineWidth = 2;
+          
+          // Scale bounding box from 320x180 detection size to full canvas size
+          const scaleX = outputCanvas.width / 320;
+          const scaleY = outputCanvas.height / 180;
+          const x = box.originX * scaleX;
+          const y = box.originY * scaleY;
+          const w = box.width * scaleX;
+          const h = box.height * scaleY;
+          const len = Math.min(20, w * 0.2); // length of corner bars
+
+          // Draw bounding rectangle
+          ctx.strokeRect(x, y, w, h);
+
+          // Bounding box HUD corner brackets
+          ctx.beginPath();
+          ctx.lineWidth = 4;
+          // Top Left
+          ctx.moveTo(x + len, y); ctx.lineTo(x, y); ctx.lineTo(x, y + len);
+          // Top Right
+          ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len);
+          // Bottom Left
+          ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h);
+          // Bottom Right
+          ctx.moveTo(x + w, y + h - len); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - len, y + h);
+          ctx.stroke();
+
+          // Label Tag Box (Top-Left of bounding box)
+          const textString = `${label.toUpperCase()} ${score}%`;
+          ctx.font = "bold 11px 'Space Grotesk'";
+          const textWidth = ctx.measureText(textString).width;
+          
+          ctx.fillStyle = "rgba(19, 42, 19, 0.85)";
+          ctx.fillRect(x, y - 22, textWidth + 16, 22);
+          ctx.strokeStyle = "var(--accent-cyan)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x, y - 22, textWidth + 16, 22);
+
+          // Write Category and Confidence Score
+          ctx.fillStyle = "var(--accent-cyan)";
+          ctx.fillText(textString, x + 8, y - 7);
+          
+          ctx.restore();
         }
-      }
-      
-      if (activeDetections.length > 0) {
-        activeDetections.forEach(det => {
-          const category = det.categories && det.categories[0];
-          if (!category) return;
-
-          const label = category.categoryName;
-          const score = Math.round(category.score * 100);
-          const box = det.boundingBox;
-
-          if (box) {
-            // Draw neon bounding box with HUD corners
-            ctx.save();
-            ctx.strokeStyle = "var(--accent-cyan)";
-            ctx.lineWidth = 2;
-            
-            // Scale bounding box from 640x360 detection size to full canvas size
-            const scaleX = outputCanvas.width / 640;
-            const scaleY = outputCanvas.height / 360;
-            const x = box.originX * scaleX;
-            const y = box.originY * scaleY;
-            const w = box.width * scaleX;
-            const h = box.height * scaleY;
-            const len = Math.min(20, w * 0.2); // length of corner bars
-
-            // Draw bounding rectangle
-            ctx.strokeRect(x, y, w, h);
-
-            // Bounding box HUD corner brackets
-            ctx.beginPath();
-            ctx.lineWidth = 4;
-            // Top Left
-            ctx.moveTo(x + len, y); ctx.lineTo(x, y); ctx.lineTo(x, y + len);
-            // Top Right
-            ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len);
-            // Bottom Left
-            ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h);
-            // Bottom Right
-            ctx.moveTo(x + w, y + h - len); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - len, y + h);
-            ctx.stroke();
-
-            // Label Tag Box (Top-Left of bounding box)
-            const textString = `${label.toUpperCase()} ${score}%`;
-            ctx.font = "bold 11px 'Space Grotesk'";
-            const textWidth = ctx.measureText(textString).width;
-            
-            ctx.fillStyle = "rgba(19, 42, 19, 0.85)";
-            ctx.fillRect(x, y - 22, textWidth + 16, 22);
-            ctx.strokeStyle = "var(--accent-cyan)";
-            ctx.lineWidth = 1;
-            ctx.strokeRect(x, y - 22, textWidth + 16, 22);
-
-            // Write Category and Confidence Score
-            ctx.fillStyle = "var(--accent-cyan)";
-            ctx.fillText(textString, x + 8, y - 7);
-            
-            ctx.restore();
-          }
-        });
-      }
-    } else {
-      activeDetections = [];
+      });
     }
 
     // 5. Draw HUD Message for Mode Shift
