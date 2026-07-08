@@ -45,12 +45,6 @@ let enableObjectDetection = false;
 let detectionThreshold = 0.3;
 let handPolygon = null;
 let lastObjectDetectionTime = 0;
-let isMlProcessing = false;
-let enableGlitchTrack = false;
-let handHistory = [];
-let wasHandTrackedLastFrame = false;
-let lastMlRunTime = 0;
-let lerpedBox = null;
 
 // Pinch Gesture State
 let isPinchLatched = false;
@@ -72,14 +66,14 @@ let currentFps = 0;
 // Offscreen buffer for fast pixel manipulation (Thermal/Sobel)
 const offscreenCanvas = document.createElement("canvas");
 const offscreenCtx = offscreenCanvas.getContext("2d");
-offscreenCanvas.width = 160;
-offscreenCanvas.height = 90;
+offscreenCanvas.width = 320;
+offscreenCanvas.height = 180;
 
-// High-performance ML tracking buffer (160x90)
+// High-performance ML tracking buffer (640x360)
 const detectionCanvas = document.createElement("canvas");
 const detectionCtx = detectionCanvas.getContext("2d");
-detectionCanvas.width = 160;
-detectionCanvas.height = 90;
+detectionCanvas.width = 640;
+detectionCanvas.height = 360;
 
 // ==========================================================================
 // UI ELEMENTS REFERENCE
@@ -475,16 +469,6 @@ effectOpacityInput.addEventListener("input", (e) => {
 toggleOutlineCheckbox.addEventListener("change", (e) => {
   drawOutline = e.target.checked;
 });
-
-const toggleGlitchTrackCheckbox = document.getElementById("toggle-glitch-track");
-if (toggleGlitchTrackCheckbox) {
-  toggleGlitchTrackCheckbox.addEventListener("change", (e) => {
-    enableGlitchTrack = e.target.checked;
-    if (!enableGlitchTrack) {
-      handHistory = [];
-    }
-  });
-}
 
 toggleObjectDetectionCheckbox.addEventListener("change", (e) => {
   enableObjectDetection = e.target.checked;
@@ -979,8 +963,8 @@ function drawASCIIDepthMap() {
       let isInsideObject = false;
       let objectLabel = "";
       if (enableObjectDetection && activeDetections.length > 0) {
-        const scaleX = outputCanvas.width / 160;
-        const scaleY = outputCanvas.height / 90;
+        const scaleX = outputCanvas.width / 640;
+        const scaleY = outputCanvas.height / 360;
         for (let i = 0; i < activeDetections.length; i++) {
           const det = activeDetections[i];
           const box = det.boundingBox;
@@ -1286,223 +1270,143 @@ function startAppLoop() {
       lastFpsUpdate = time;
     }
 
+    // 1. Draw live feed frame on output canvas
+    ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
+
     const timestamp = performance.now();
+    handPolygon = null;
 
-    // 2. Perform Hand Tracking & Object Detection (Decoupled & throttled to run asynchronously and not block rendering)
-    if (!isMlProcessing && isModelsLoaded && (timestamp - lastMlRunTime > 80)) {
-      isMlProcessing = true;
-      lastMlRunTime = timestamp;
+    // Draw video to downscaled detection canvas for high-performance ML tracking
+    detectionCtx.drawImage(activeVideo, 0, 0, 640, 360);
+
+    // 2. Perform Hand Tracking
+    if (handLandmarker && isModelsLoaded) {
+      const handResults = handLandmarker.detectForVideo(detectionCanvas, timestamp);
       
-      // Draw video to downscaled detection canvas for high-performance ML tracking (160x90)
-      detectionCtx.drawImage(activeVideo, 0, 0, 160, 90);
-      
-      // Run MediaPipe inside setTimeout macro-task to let requestAnimationFrame draw the webcam frame first
-      setTimeout(() => {
-        try {
-          const timestamp = performance.now();
-          
-          if (handLandmarker) {
-            const handResults = handLandmarker.detectForVideo(detectionCanvas, timestamp);
-            if (handResults.landmarks && handResults.landmarks.length > 0) {
-              let anyHandIsFist = false;
-              let allHandsActive = true;
-              
-              for (let i = 0; i < handResults.landmarks.length; i++) {
-                const l = handResults.landmarks[i];
-                if (isFist(l)) {
-                  anyHandIsFist = true;
-                }
-                if (!isIndexExtended(l)) {
-                  allHandsActive = false;
-                }
-              }
-              
-              let anyHandIsPinching = false;
-              for (let i = 0; i < handResults.landmarks.length; i++) {
-                if (isPinching(handResults.landmarks[i])) {
-                  anyHandIsPinching = true;
-                }
-              }
-
-              // Handle Pinch Latch to change effects
-              if (anyHandIsPinching) {
-                if (!isPinchLatched) {
-                  shiftEffect(1); // Cycle to next effect
-                  isPinchLatched = true;
-                }
-              } else {
-                isPinchLatched = false;
-              }
-
-              // Only update handPolygon if no hand is a fist and all indexes are active
-              if (!anyHandIsFist && allHandsActive) {
-                const points = [];
-                const l0 = handResults.landmarks[0];
-                
-                if (handResults.landmarks.length >= 2) {
-                  const l1 = handResults.landmarks[1];
-                  points.push({ x: l0[4].x * outputCanvas.width, y: l0[4].y * outputCanvas.height });
-                  points.push({ x: l0[8].x * outputCanvas.width, y: l0[8].y * outputCanvas.height });
-                  points.push({ x: l1[8].x * outputCanvas.width, y: l1[8].y * outputCanvas.height });
-                  points.push({ x: l1[4].x * outputCanvas.width, y: l1[4].y * outputCanvas.height });
-                } else {
-                  points.push({ x: l0[0].x * outputCanvas.width, y: l0[0].y * outputCanvas.height });
-                  points.push({ x: l0[4].x * outputCanvas.width, y: l0[4].y * outputCanvas.height });
-                  points.push({ x: l0[8].x * outputCanvas.width, y: l0[8].y * outputCanvas.height });
-                  points.push({ x: l0[20].x * outputCanvas.width, y: l0[20].y * outputCanvas.height });
-                }
-                handPolygon = points;
-              } else {
-                handPolygon = null;
-              }
-            } else {
-              isPinchLatched = false;
-              handPolygon = null;
-            }
+      if (handResults.landmarks && handResults.landmarks.length > 0) {
+        let anyHandIsFist = false;
+        let allHandsActive = true;
+        
+        for (let i = 0; i < handResults.landmarks.length; i++) {
+          const l = handResults.landmarks[i];
+          if (isFist(l)) {
+            anyHandIsFist = true;
           }
-
-          // Perform AI Object Detection (Throttled for 60 FPS performance)
-          if (enableObjectDetection && objectDetector) {
-            if (timestamp - lastObjectDetectionTime > 150) {
-              lastObjectDetectionTime = timestamp;
-              try {
-                const detectResults = objectDetector.detectForVideo(detectionCanvas, timestamp);
-                activeDetections = detectResults.detections || [];
-              } catch (e) {
-                console.warn("Object detection skipped for frame: ", e);
-              }
-            }
-          } else {
-            activeDetections = [];
+          if (!isIndexExtended(l)) {
+            allHandsActive = false;
           }
-        } catch (e) {
-          console.error("ML Inference error: ", e);
-        } finally {
-          isMlProcessing = false;
         }
-      }, 0);
-    }
+        
+        let anyHandIsPinching = false;
+        for (let i = 0; i < handResults.landmarks.length; i++) {
+          if (isPinching(handResults.landmarks[i])) {
+            anyHandIsPinching = true;
+          }
+        }
 
-    // 3. Render Hand-tracked visual effect (3D Layered Box HUD with optional Blob Glitch Track trails)
-    if (handPolygon) {
-      // Clear history of past tracking sessions if hand is newly re-detected to ensure trails overwrite instantly
-      if (!wasHandTrackedLastFrame) {
-        handHistory = [];
-      }
-      wasHandTrackedLastFrame = true;
+        // Handle Pinch Latch to change effects
+        if (anyHandIsPinching) {
+          if (!isPinchLatched) {
+            shiftEffect(1); // Cycle to next effect
+            isPinchLatched = true;
+          }
+        } else {
+          isPinchLatched = false;
+        }
 
-      // Calculate 2D bounding box from hand polygon
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      handPolygon.forEach(pt => {
-        if (pt.x < minX) minX = pt.x;
-        if (pt.y < minY) minY = pt.y;
-        if (pt.x > maxX) maxX = pt.x;
-        if (pt.y > maxY) maxY = pt.y;
-      });
-      
-      const pad = 18;
-      minX = Math.max(0, minX - pad);
-      minY = Math.max(0, minY - pad);
-      maxX = Math.min(outputCanvas.width, maxX + pad);
-      maxY = Math.min(outputCanvas.height, maxY + pad);
-      
-      const W = maxX - minX;
-      const H = maxY - minY;
-      const CX = minX + W/2;
-      const CY = minY + H/2;
-      
-      // Calculate 3D perspective projection for back face
-      const time = performance.now() / 1500;
-      const angle = Math.sin(time) * 0.25 + 0.55; // swing angle in radians
-      const depth = 45;
-      const dx = depth * Math.cos(angle);
-      const dy = depth * Math.sin(angle);
-      const scale = 0.82; // scaled down back face for 3D depth perception
-      
-      // Define Target Vertices
-      const targetFTL = { x: minX, y: minY };
-      const targetFTR = { x: maxX, y: minY };
-      const targetFBR = { x: maxX, y: maxY };
-      const targetFBL = { x: minX, y: maxY };
-      
-      const targetBTL = { x: CX + (minX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
-      const targetBTR = { x: CX + (maxX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
-      const targetBBR = { x: CX + (maxX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
-      const targetBBL = { x: CX + (minX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
-
-      // Initialize or interpolate coordinates for buttery-smooth 60 FPS motion
-      if (!lerpedBox) {
-        lerpedBox = {
-          fTL: { ...targetFTL }, fTR: { ...targetFTR }, fBR: { ...targetFBR }, fBL: { ...targetFBL },
-          bTL: { ...targetBTL }, bTR: { ...targetBTR }, bBR: { ...targetBBR }, bBL: { ...targetBBL }
-        };
+        // Only draw polygon if no hand is a fist and all hands have extended indexes
+        if (!anyHandIsFist && allHandsActive) {
+          const points = [];
+          const l0 = handResults.landmarks[0];
+          
+          if (handResults.landmarks.length >= 2) {
+            // Two hands case: Get Index Tip (8) and Thumb Tip (4) from both hands
+            const l1 = handResults.landmarks[1];
+            
+            points.push({ x: l0[4].x * outputCanvas.width, y: l0[4].y * outputCanvas.height }); // Hand 1 Thumb
+            points.push({ x: l0[8].x * outputCanvas.width, y: l0[8].y * outputCanvas.height }); // Hand 1 Index
+            points.push({ x: l1[8].x * outputCanvas.width, y: l1[8].y * outputCanvas.height }); // Hand 2 Index
+            points.push({ x: l1[4].x * outputCanvas.width, y: l1[4].y * outputCanvas.height }); // Hand 2 Thumb
+          } else {
+            // One hand case: Gather Wrist (0), Thumb Tip (4), Index Tip (8), and Pinky Tip (20)
+            points.push({ x: l0[0].x * outputCanvas.width, y: l0[0].y * outputCanvas.height });   // Wrist
+            points.push({ x: l0[4].x * outputCanvas.width, y: l0[4].y * outputCanvas.height });   // Thumb
+            points.push({ x: l0[8].x * outputCanvas.width, y: l0[8].y * outputCanvas.height });   // Index
+            points.push({ x: l0[20].x * outputCanvas.width, y: l0[20].y * outputCanvas.height }); // Pinky
+          }
+          
+          handPolygon = points;
+        }
       } else {
-        const lf = 0.25; // lerp speed coefficient
-        lerpedBox.fTL.x += (targetFTL.x - lerpedBox.fTL.x) * lf;
-        lerpedBox.fTL.y += (targetFTL.y - lerpedBox.fTL.y) * lf;
-        lerpedBox.fTR.x += (targetFTR.x - lerpedBox.fTR.x) * lf;
-        lerpedBox.fTR.y += (targetFTR.y - lerpedBox.fTR.y) * lf;
-        lerpedBox.fBR.x += (targetFBR.x - lerpedBox.fBR.x) * lf;
-        lerpedBox.fBR.y += (targetFBR.y - lerpedBox.fBR.y) * lf;
-        lerpedBox.fBL.x += (targetFBL.x - lerpedBox.fBL.x) * lf;
-        lerpedBox.fBL.y += (targetFBL.y - lerpedBox.fBL.y) * lf;
-        
-        lerpedBox.bTL.x += (targetBTL.x - lerpedBox.bTL.x) * lf;
-        lerpedBox.bTL.y += (targetBTL.y - lerpedBox.bTL.y) * lf;
-        lerpedBox.bTR.x += (targetBTR.x - lerpedBox.bTR.x) * lf;
-        lerpedBox.bTR.y += (targetBTR.y - lerpedBox.bTR.y) * lf;
-        lerpedBox.bBR.x += (targetBBR.x - lerpedBox.bBR.x) * lf;
-        lerpedBox.bBR.y += (targetBBR.y - lerpedBox.bBR.y) * lf;
-        lerpedBox.bBL.x += (targetBBL.x - lerpedBox.bBL.x) * lf;
-        lerpedBox.bBL.y += (targetBBL.y - lerpedBox.bBL.y) * lf;
-      }
-
-      // Save current box state to history for trailing glitch effect
-      handHistory.push({
-        fTL: { ...lerpedBox.fTL }, fTR: { ...lerpedBox.fTR }, fBR: { ...lerpedBox.fBR }, fBL: { ...lerpedBox.fBL },
-        bTL: { ...lerpedBox.bTL }, bTR: { ...lerpedBox.bTR }, bBR: { ...lerpedBox.bBR }, bBL: { ...lerpedBox.bBL },
-        pinchCycleCount
-      });
-      if (handHistory.length > 15) {
-        handHistory.shift();
-      }
-    } else {
-      wasHandTrackedLastFrame = false;
-      lerpedBox = null;
-      // If glitch track is disabled, remove the box INSTANTLY when hand is withdrawn
-      if (!enableGlitchTrack) {
-        handHistory = [];
-      } else if (handHistory.length > 0) {
-        handHistory.shift();
+        // Reset pinch latch if no hands detected
+        isPinchLatched = false;
       }
     }
 
-    // Render the active HUD box or cascading glitch trails
-    if (handHistory.length > 0 && (enableGlitchTrack || handPolygon)) {
-      const boxesToDraw = enableGlitchTrack ? handHistory : [handHistory[handHistory.length - 1]];
-      
-      boxesToDraw.forEach((boxItem, hIdx) => {
-        if (!boxItem) return;
+    // 3. Render Hand-tracked visual effect (Full-screen ASCII Depth or 3D Layered Box HUD)
+    if (handPolygon) {
+      if (selectedEffect === "ascii_depth") {
+        // Renders ASCII Depth map across the entire viewport
+        drawASCIIDepthMap();
+      } else {
+        // Draw the 3D layered rectangle around the 2D polygon
         
-        // Calculate opacity: older boxes in the trail are more transparent
-        const opacity = enableGlitchTrack ? (((hIdx + 1) / boxesToDraw.length) * effectOpacity * 0.8) : effectOpacity;
+        // Calculate 2D bounding box from hand polygon
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        handPolygon.forEach(pt => {
+          if (pt.x < minX) minX = pt.x;
+          if (pt.y < minY) minY = pt.y;
+          if (pt.x > maxX) maxX = pt.x;
+          if (pt.y > maxY) maxY = pt.y;
+        });
+        
+        const pad = 18;
+        minX = Math.max(0, minX - pad);
+        minY = Math.max(0, minY - pad);
+        maxX = Math.min(outputCanvas.width, maxX + pad);
+        maxY = Math.min(outputCanvas.height, maxY + pad);
+        
+        const W = maxX - minX;
+        const H = maxY - minY;
+        const CX = minX + W/2;
+        const CY = minY + H/2;
+        
+        // Calculate 3D perspective projection for back face
+        // Back face center is offset by a dynamic angle swinging over time
+        const time = performance.now() / 1500;
+        const angle = Math.sin(time) * 0.25 + 0.55; // swing angle in radians
+        const depth = 45;
+        const dx = depth * Math.cos(angle);
+        const dy = depth * Math.sin(angle);
+        const scale = 0.82; // scaled down back face for 3D depth perception
+        
+        // Define Vertices
+        const fTL = { x: minX, y: minY };
+        const fTR = { x: maxX, y: minY };
+        const fBR = { x: maxX, y: maxY };
+        const fBL = { x: minX, y: maxY };
+        
+        const bTL = { x: CX + (minX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
+        const bTR = { x: CX + (maxX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
+        const bBR = { x: CX + (maxX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
+        const bBL = { x: CX + (minX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
         
         // 5 Faces: Front, Top, Right, Bottom, Left
         const faces = [
-          { name: "front", poly: [boxItem.fTL, boxItem.fTR, boxItem.fBR, boxItem.fBL] },
-          { name: "top", poly: [boxItem.fTL, boxItem.fTR, boxItem.bTR, boxItem.bTL] },
-          { name: "right", poly: [boxItem.fTR, boxItem.fBR, boxItem.bBR, boxItem.bTR] },
-          { name: "bottom", poly: [boxItem.fBL, boxItem.fBR, boxItem.bBR, boxItem.bBL] },
-          { name: "left", poly: [boxItem.fTL, boxItem.fBL, boxItem.bBL, boxItem.bTL] }
+          { name: "front", poly: [fTL, fTR, fBR, fBL] },
+          { name: "top", poly: [fTL, fTR, bTR, bTL] },
+          { name: "right", poly: [fTR, fBR, bBR, bTR] },
+          { name: "bottom", poly: [fBL, fBR, bBR, bBL] },
+          { name: "left", poly: [fTL, fBL, bBL, bTL] }
         ];
         
-        // Filter out cloak from side faces
-        const activeFiltersList = effectsList.filter(e => e !== "cloak");
+        // Filter out cloak and ascii_depth from side faces
+        const activeFiltersList = effectsList.filter(e => e !== "cloak" && e !== "ascii_depth");
         
         // Render each face of the 3D box
         faces.forEach((face, fIdx) => {
           ctx.save();
-          ctx.globalAlpha = opacity;
+          ctx.globalAlpha = effectOpacity;
           
           // Clip rendering to this face's polygon path
           ctx.beginPath();
@@ -1517,7 +1421,7 @@ function startAppLoop() {
           // Other side faces get rotating effects shifted by pinchCycleCount!
           let faceEffect = selectedEffect;
           if (face.name !== "front") {
-            const effIdx = (fIdx - 1 + boxItem.pinchCycleCount) % activeFiltersList.length;
+            const effIdx = (fIdx - 1 + pinchCycleCount) % activeFiltersList.length;
             faceEffect = activeFiltersList[effIdx];
           }
           
@@ -1528,7 +1432,6 @@ function startAppLoop() {
           // Draw face borders/outline
           if (drawOutline) {
             ctx.save();
-            ctx.globalAlpha = opacity;
             ctx.beginPath();
             ctx.moveTo(face.poly[0].x, face.poly[0].y);
             for (let i = 1; i < face.poly.length; i++) {
@@ -1551,16 +1454,15 @@ function startAppLoop() {
         // Draw 3D wireframe connecting edges (connecting front and back faces)
         if (drawOutline) {
           ctx.save();
-          ctx.globalAlpha = opacity;
           ctx.strokeStyle = "rgba(236, 243, 158, 0.55)";
           ctx.lineWidth = 1.5;
           ctx.setLineDash([2, 3]); // dashed depth connector lines
           
           const corners = [
-            [boxItem.fTL, boxItem.bTL],
-            [boxItem.fTR, boxItem.bTR],
-            [boxItem.fBR, boxItem.bBR],
-            [boxItem.fBL, boxItem.bBL]
+            [fTL, bTL],
+            [fTR, bTR],
+            [fBR, bBR],
+            [fBL, bBL]
           ];
           
           corners.forEach(edge => {
@@ -1575,7 +1477,7 @@ function startAppLoop() {
           ctx.fillStyle = "#ffffff";
           ctx.shadowColor = "var(--accent-cyan)";
           ctx.shadowBlur = 10;
-          [boxItem.fTL, boxItem.fTR, boxItem.fBR, boxItem.fBL].forEach(pt => {
+          [fTL, fTR, fBR, fBL].forEach(pt => {
             ctx.beginPath();
             ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
             ctx.fill();
@@ -1585,72 +1487,86 @@ function startAppLoop() {
           ctx.fillStyle = "var(--accent-cyan)";
           ctx.font = "8px monospace";
           ctx.shadowBlur = 0;
-          ctx.fillText(`TL [${Math.round(boxItem.fTL.x)},${Math.round(boxItem.fTL.y)}]`, boxItem.fTL.x - 45, boxItem.fTL.y - 8);
-          ctx.fillText(`BR [${Math.round(boxItem.fBR.x)},${Math.round(boxItem.fBR.y)}]`, boxItem.fBR.x + 10, boxItem.fBR.y + 12);
+          ctx.fillText(`TL [${Math.round(fTL.x)},${Math.round(fTL.y)}]`, fTL.x - 45, fTL.y - 8);
+          ctx.fillText(`BR [${Math.round(fBR.x)},${Math.round(fBR.y)}]`, fBR.x + 10, fBR.y + 12);
           ctx.restore();
         }
-      });
+      }
     }
 
-    // 4. Draw AI Object Detection HUD overlays from cached background tracking
-    if (enableObjectDetection && activeDetections.length > 0) {
-      activeDetections.forEach(det => {
-        const category = det.categories && det.categories[0];
-        if (!category) return;
-
-        const label = category.categoryName;
-        const score = Math.round(category.score * 100);
-        const box = det.boundingBox;
-
-        if (box) {
-          // Draw neon bounding box with HUD corners
-          ctx.save();
-          ctx.strokeStyle = "var(--accent-cyan)";
-          ctx.lineWidth = 2;
-          
-          // Scale bounding box from 160x90 detection size to full canvas size
-          const scaleX = outputCanvas.width / 160;
-          const scaleY = outputCanvas.height / 90;
-          const x = box.originX * scaleX;
-          const y = box.originY * scaleY;
-          const w = box.width * scaleX;
-          const h = box.height * scaleY;
-          const len = Math.min(20, w * 0.2); // length of corner bars
-
-          // Draw bounding rectangle
-          ctx.strokeRect(x, y, w, h);
-
-          // Bounding box HUD corner brackets
-          ctx.beginPath();
-          ctx.lineWidth = 4;
-          // Top Left
-          ctx.moveTo(x + len, y); ctx.lineTo(x, y); ctx.lineTo(x, y + len);
-          // Top Right
-          ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len);
-          // Bottom Left
-          ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h);
-          // Bottom Right
-          ctx.moveTo(x + w, y + h - len); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - len, y + h);
-          ctx.stroke();
-
-          // Label Tag Box (Top-Left of bounding box)
-          const textString = `${label.toUpperCase()} ${score}%`;
-          ctx.font = "bold 11px 'Space Grotesk'";
-          const textWidth = ctx.measureText(textString).width;
-          
-          ctx.fillStyle = "rgba(19, 42, 19, 0.85)";
-          ctx.fillRect(x, y - 22, textWidth + 16, 22);
-          ctx.strokeStyle = "var(--accent-cyan)";
-          ctx.lineWidth = 1;
-          ctx.strokeRect(x, y - 22, textWidth + 16, 22);
-
-          // Write Category and Confidence Score
-          ctx.fillStyle = "var(--accent-cyan)";
-          ctx.fillText(textString, x + 8, y - 7);
-          
-          ctx.restore();
+    // 4. Perform AI Object Detection & HUD overlays (Throttled for 60 FPS performance)
+    if (enableObjectDetection && objectDetector && isModelsLoaded) {
+      if (timestamp - lastObjectDetectionTime > 120) {
+        lastObjectDetectionTime = timestamp;
+        try {
+          const detectResults = objectDetector.detectForVideo(detectionCanvas, timestamp);
+          activeDetections = detectResults.detections || [];
+        } catch (e) {
+          console.warn("Object detection skipped for frame: ", e);
         }
-      });
+      }
+      
+      if (activeDetections.length > 0) {
+        activeDetections.forEach(det => {
+          const category = det.categories && det.categories[0];
+          if (!category) return;
+
+          const label = category.categoryName;
+          const score = Math.round(category.score * 100);
+          const box = det.boundingBox;
+
+          if (box) {
+            // Draw neon bounding box with HUD corners
+            ctx.save();
+            ctx.strokeStyle = "var(--accent-cyan)";
+            ctx.lineWidth = 2;
+            
+            // Scale bounding box from 640x360 detection size to full canvas size
+            const scaleX = outputCanvas.width / 640;
+            const scaleY = outputCanvas.height / 360;
+            const x = box.originX * scaleX;
+            const y = box.originY * scaleY;
+            const w = box.width * scaleX;
+            const h = box.height * scaleY;
+            const len = Math.min(20, w * 0.2); // length of corner bars
+
+            // Draw bounding rectangle
+            ctx.strokeRect(x, y, w, h);
+
+            // Bounding box HUD corner brackets
+            ctx.beginPath();
+            ctx.lineWidth = 4;
+            // Top Left
+            ctx.moveTo(x + len, y); ctx.lineTo(x, y); ctx.lineTo(x, y + len);
+            // Top Right
+            ctx.moveTo(x + w - len, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + len);
+            // Bottom Left
+            ctx.moveTo(x, y + h - len); ctx.lineTo(x, y + h); ctx.lineTo(x + len, y + h);
+            // Bottom Right
+            ctx.moveTo(x + w, y + h - len); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - len, y + h);
+            ctx.stroke();
+
+            // Label Tag Box (Top-Left of bounding box)
+            const textString = `${label.toUpperCase()} ${score}%`;
+            ctx.font = "bold 11px 'Space Grotesk'";
+            const textWidth = ctx.measureText(textString).width;
+            
+            ctx.fillStyle = "rgba(19, 42, 19, 0.85)";
+            ctx.fillRect(x, y - 22, textWidth + 16, 22);
+            ctx.strokeStyle = "var(--accent-cyan)";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, y - 22, textWidth + 16, 22);
+
+            // Write Category and Confidence Score
+            ctx.fillStyle = "var(--accent-cyan)";
+            ctx.fillText(textString, x + 8, y - 7);
+            
+            ctx.restore();
+          }
+        });
+      }
+    } else {
+      activeDetections = [];
     }
 
     // 5. Draw HUD Message for Mode Shift
