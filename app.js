@@ -137,7 +137,7 @@ async function initAIModels() {
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath: "./models/hand_landmarker.task",
-        delegate: "GPU"
+        delegate: "CPU"
       },
       runningMode: "VIDEO",
       numHands: 2
@@ -150,7 +150,7 @@ async function initAIModels() {
     objectDetector = await ObjectDetector.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath: "./models/efficientdet_lite0.tflite",
-        delegate: "GPU"
+        delegate: "CPU"
       },
       scoreThreshold: detectionThreshold,
       runningMode: "VIDEO"
@@ -188,9 +188,9 @@ async function startWebcam() {
   try {
     const constraints = {
       video: {
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 60, min: 30 },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30 },
         deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined
       },
       audio: false
