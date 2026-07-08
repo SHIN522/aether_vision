@@ -712,29 +712,49 @@ function applyCRTSynthFilter(srcCtx, destCtx, x, y, width, height) {
   const data = imgData.data;
   const outData = new Uint8ClampedArray(data); // clone source pixels
   
-  const time = performance.now() / 120;
-  const syncBarY = Math.floor((performance.now() / 12) % height);
+  const time = performance.now() / 110;
+  const syncBarY = Math.floor((performance.now() / 10) % height);
+  
+  // Random horizontal tearing bursts
+  const noiseBurst = Math.random() < 0.16;
+  const noiseBurstY = Math.floor(Math.random() * (height - 20));
+  const noiseBurstH = Math.floor(Math.random() * 15) + 4;
   
   for (let cy = 0; cy < height; cy++) {
     // Sinusoidal wavy distortion of rows
-    const wave = Math.sin(cy / 6 + time) * 6;
+    const wave = Math.sin(cy / 5.5 + time) * 6.5;
     
     // Shearing horizontal shift near the VHS tracking sync bar
     const distToSync = Math.abs(cy - syncBarY);
-    const shear = distToSync < 12 ? (12 - distToSync) * 2.5 : 0;
+    const shear = distToSync < 15 ? (15 - distToSync) * 2.8 : 0;
     
-    const shift = Math.floor(wave + shear);
+    // Horizontal noise burst offset
+    const burstOffset = (noiseBurst && cy >= noiseBurstY && cy < noiseBurstY + noiseBurstH) ? (Math.random() - 0.5) * 35 : 0;
+    
+    // Bottom tracking noise jitter
+    const bottomJitter = (cy > height - 12) ? (Math.random() - 0.5) * 16 : 0;
+    
+    const shift = Math.floor(wave + shear + burstOffset + bottomJitter);
     
     for (let cx = 0; cx < width; cx++) {
       const idx = (cy * width + cx) * 4;
+      
+      // Bottom VHS tape tracking noise (snow static)
+      if (cy > height - 10 && Math.random() < 0.55) {
+        const snow = Math.random() * 255;
+        data[idx] = snow;
+        data[idx+1] = snow;
+        data[idx+2] = snow;
+        continue;
+      }
       
       let srcX = cx + shift;
       if (srcX < 0) srcX = 0;
       if (srcX >= width) srcX = width - 1;
       
       // Chromatic aberration shifts (Red offset left, Blue offset right)
-      const redOffset = 3;
-      const blueOffset = -3;
+      const redOffset = 4;
+      const blueOffset = -4;
       
       let redX = srcX + redOffset;
       let blueX = srcX + blueOffset;
@@ -746,15 +766,15 @@ function applyCRTSynthFilter(srcCtx, destCtx, x, y, width, height) {
       const blueIdx = (cy * width + blueX) * 4;
       
       // Glow/blowout color intensities
-      data[idx] = Math.min(255, outData[redIdx] * 1.35);          // Red
-      data[idx+1] = Math.min(255, outData[srcIdx+1] * 1.1);       // Green
-      data[idx+2] = Math.min(255, outData[blueIdx+2] * 1.45);      // Blue
+      data[idx] = Math.min(255, outData[redIdx] * 1.4);          // Red
+      data[idx+1] = Math.min(255, outData[srcIdx+1] * 1.15);      // Green
+      data[idx+2] = Math.min(255, outData[blueIdx+2] * 1.55);     // Blue
       
       // Draw VHS horizontal tracking lines
       if (distToSync < 3) {
-        data[idx] *= 0.15;
-        data[idx+1] *= 0.15;
-        data[idx+2] *= 0.15;
+        data[idx] *= 0.12;
+        data[idx+1] *= 0.12;
+        data[idx+2] *= 0.12;
       }
     }
   }
@@ -944,9 +964,12 @@ function drawASCIIDepthMap() {
             const bw = box.width;
             const bh = box.height;
             if (cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh) {
-              isInsideObject = true;
-              objectLabel = det.categories[0].categoryName.toUpperCase();
-              break;
+              const cat = det.categories && det.categories[0];
+              if (cat && cat.categoryName) {
+                isInsideObject = true;
+                objectLabel = cat.categoryName.toUpperCase();
+                break;
+              }
             }
           }
         }
@@ -1040,37 +1063,54 @@ function drawShader(effect) {
     ctx.fillStyle = "#fffcf0";
     ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
     
-    const sampleW = 80;
-    const sampleH = 60;
+    const sampleW = 120;
+    const sampleH = 90;
     offscreenCtx.drawImage(activeVideo, 0, 0, sampleW, sampleH);
     const imgData = offscreenCtx.getImageData(0, 0, sampleW, sampleH);
     const pixels = imgData.data;
     
     ctx.strokeStyle = "#1b2a1a";
+    ctx.lineCap = "round";
+    
     const cellW = outputCanvas.width / sampleW;
     const cellH = outputCanvas.height / sampleH;
     
-    // Draw diagonal grid segments
-    for (let sy = 0; sy < sampleH; sy += 2) {
-      for (let sx = 0; sx < sampleW; sx += 2) {
+    // Draw continuous-looking diagonal lines (angled engraving)
+    for (let diag = 0; diag < sampleW + sampleH; diag += 3) {
+      let drawing = false;
+      
+      for (let sx = 0; sx <= diag; sx++) {
+        const sy = diag - sx;
+        if (sx >= sampleW || sy >= sampleH) continue;
+        
         const idx = (sy * sampleW + sx) * 4;
         const r = pixels[idx];
         const g = pixels[idx+1];
         const b = pixels[idx+2];
         const luma = 0.299 * r + 0.587 * g + 0.114 * b;
         
-        // Thickness inversely proportional to brightness (pop halftone effect)
-        const thickness = (1 - (luma / 255)) * 4.5;
-        if (thickness < 0.5) continue;
+        // Thickness maps inversely to brightness: dark area = thick line
+        const thickness = (1 - (luma / 255)) * 5.5;
         
-        const cx = sx * cellW;
-        const cy = sy * cellH;
+        const cx = sx * cellW + cellW/2;
+        const cy = sy * cellH + cellH/2;
         
-        ctx.lineWidth = thickness;
-        ctx.beginPath();
-        ctx.moveTo(cx - cellW, cy - cellH);
-        ctx.lineTo(cx + cellW, cy + cellH);
-        ctx.stroke();
+        if (thickness > 0.5) {
+          ctx.lineWidth = thickness;
+          if (!drawing) {
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            drawing = true;
+          } else {
+            ctx.lineTo(cx, cy);
+            ctx.stroke();
+            // Start a new path for next segment to allow variable width
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+          }
+        } else {
+          drawing = false;
+        }
       }
     }
   }
