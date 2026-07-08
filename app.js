@@ -43,6 +43,8 @@ let effectOpacity = 1.0;
 let drawOutline = true;
 let enableObjectDetection = false;
 let detectionThreshold = 0.3;
+let handPolygon = null;
+let lastObjectDetectionTime = 0;
 
 // Pinch Gesture State
 let isPinchLatched = false;
@@ -180,9 +182,9 @@ async function startWebcam() {
   try {
     const constraints = {
       video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30 },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 60, min: 30 },
         deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined
       },
       audio: false
@@ -1264,7 +1266,7 @@ function startAppLoop() {
     ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
 
     const timestamp = performance.now();
-    let handPolygon = null;
+    handPolygon = null;
 
     // 2. Perform Hand Tracking
     if (handLandmarker && isModelsLoaded) {
@@ -1479,16 +1481,26 @@ function startAppLoop() {
           ctx.restore();
         }
       }
+    } else {
+      // No hand tracked: apply selected shader to the entire screen!
+      drawShader(selectedEffect);
     }
 
-    // 4. Perform AI Object Detection & HUD overlays
+    // 4. Perform AI Object Detection & HUD overlays (Throttled for 60 FPS performance)
     if (enableObjectDetection && objectDetector && isModelsLoaded) {
-      const detectResults = objectDetector.detectForVideo(activeVideo, timestamp);
-      activeDetections = detectResults.detections || [];
+      if (timestamp - lastObjectDetectionTime > 120) {
+        lastObjectDetectionTime = timestamp;
+        try {
+          const detectResults = objectDetector.detectForVideo(activeVideo, timestamp);
+          activeDetections = detectResults.detections || [];
+        } catch (e) {
+          console.warn("Object detection skipped for frame: ", e);
+        }
+      }
       
       if (activeDetections.length > 0) {
-        detectResults.detections.forEach(det => {
-          const category = det.categories[0];
+        activeDetections.forEach(det => {
+          const category = det.categories && det.categories[0];
           if (!category) return;
 
           const label = category.categoryName;
