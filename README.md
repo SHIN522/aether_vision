@@ -7,14 +7,15 @@ Aether Vision is a real-time, browser-based **AI Creative Vision & Holographic H
 ## 🚀 Key Features
 
 * **Gesture-Controlled Invisibility Cloak**: Form a closed boundary polygon using your fingers (both hands or single-hand gesture) to overlay a pre-captured empty background snapshot and make yourself "invisible".
-* **Pinch-to-Cycle Shaders**: Tap your index finger and thumb together in a pinch gesture to cycle through different visual effects instantly.
-* **8 Creative Visual Shaders**:
+* **Pinch-to-Rotate 3D Shaders**: Tap your index finger and thumb together in a pinch gesture to cycle through different visual effects and physically shift/rotate the shaders on the faces of the 3D HUD.
+* **9 Creative Visual Shaders**:
   * 👤 *Invisibility Cloak*: Real-time background replacement.
-  * 👾 *Hologram Glitch*: Grayscale cyan hologram with pixel strip slice offsets that glitch randomly.
-  * 🧮 *ASCII Cyber Codex*: Matrix-green retro terminal character rendering of pixel brightness.
-  * 🌈 *RGB Shift Dispersion*: Dynamic red-green-blue channel separation chromatic aberration.
-  * 💫 *Neon Pulse*: Monochromatic feed with pulsing concentric rings expanding from hand's center.
-  * 🎯 *Night Vision HUD*: Phosphor green tactical feed with scanlines, coordinates, and targeting reticles.
+  * 📺 *CRT Scanlines*: Monochrome/cyan CRT phosphorus monitor with horizontal scanlines and vertical sweeps.
+  * 🖊️ *Line Halftone*: Diagonal publication-style halftone screening modulating thickness by pixel brightness.
+  * 🎮 *Pixel Dither*: Retro GameBoy-style ordered 1-bit ordered dither using a 4x4 Bayer matrix.
+  * 📱 *Nokia Screen*: Greenish-gray LCD monitor emulation with charcoal-green blocky pixels.
+  * 📼 *CRT Glitch Synth*: VHS analog tape tracking simulation with horizontal waving, sync bars, and color channel splits.
+  * 🧮 *ASCII Depth Map*: A full-screen 3D-perceived grid of characters warping around your hand, tracking detected surrounding objects.
   * 🌡️ *Thermal Heatmap*: Infrared thermal vision simulation.
   * 🩻 *Cyberpunk Wireframe*: High-contrast Sobel edge-detection filter mapping outlines in neon cyan.
 * **Neural Object Tracking HUD**: Powered by Google's **EfficientDet Lite0** neural network to track everyday objects (e.g., humans) inside neon HUD bounding boxes with percentage confidence scores.

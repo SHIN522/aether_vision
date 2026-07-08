@@ -15,6 +15,7 @@ let isModelsLoaded = false;
 let isPlaying = false;
 let selectedCameraId = null;
 let isRecording = false;
+let activeDetections = [];
 
 // Canvas Elements
 const outputCanvas = document.getElementById("output-canvas");
@@ -47,7 +48,8 @@ let detectionThreshold = 0.3;
 let isPinchLatched = false;
 let modeShiftMessage = "";
 let modeShiftMessageTime = 0;
-const effectsList = ["cloak", "holo_glitch", "ascii_codex", "rgb_shift", "neon_pulse", "night_vision", "thermal", "wireframe"];
+const effectsList = ["cloak", "crt_scanlines", "line_halftone", "dither", "nokia", "crt_synth", "ascii_depth", "thermal", "wireframe"];
+let pinchCycleCount = 0;
 
 // Matrix Rain Effect State
 let matrixChars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ$+-*/=%#@&";
@@ -665,31 +667,157 @@ function applySobelFilter(srcCtx, destCtx, x, y, width, height) {
   destCtx.putImageData(edgeData, x, y);
 }
 
-// Pure-JS RGB Shift Chromatic Aberration Filter
-function applyRGBShiftFilter(srcCtx, destCtx, x, y, width, height, shiftAmount) {
+// 4x4 Bayer Dither Matrix for retro Macintosh Ordered Dithering
+const bayerMatrix = [
+  [   0, 128,  32, 160 ],
+  [ 192,  64, 224,  96 ],
+  [  48, 176,  16, 144 ],
+  [ 240, 112, 208,  80 ]
+];
+
+function applyBayerDither(srcCtx, destCtx, x, y, width, height) {
   const imgData = srcCtx.getImageData(x, y, width, height);
   const data = imgData.data;
-  const outData = new Uint8ClampedArray(data); // clone of source pixels
   
   for (let cy = 0; cy < height; cy++) {
     for (let cx = 0; cx < width; cx++) {
       const idx = (cy * width + cx) * 4;
+      const r = data[idx];
+      const g = data[idx+1];
+      const b = data[idx+2];
       
-      // Shift Red channel to the left
-      const rx = Math.max(0, cx - shiftAmount);
-      const rIdx = (cy * width + rx) * 4;
-      data[idx] = outData[rIdx]; // Red
+      const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+      const matrixX = cx % 4;
+      const matrixY = cy % 4;
+      const threshold = bayerMatrix[matrixY][matrixX];
       
-      // Shift Blue channel to the right
-      const bx = Math.min(width - 1, cx + shiftAmount);
-      const bIdx = (cy * width + bx) * 4;
-      data[idx+2] = outData[bIdx+2]; // Blue
+      // Map to 1-bit glowing cyan/dark blue theme
+      if (luma > threshold) {
+        data[idx] = 0;         // Red
+        data[idx+1] = 242;     // Green
+        data[idx+2] = 254;     // Blue (neon cyan)
+      } else {
+        data[idx] = 5;
+        data[idx+1] = 8;
+        data[idx+2] = 17;      // dark HUD background
+      }
+    }
+  }
+  destCtx.putImageData(imgData, x, y);
+}
+
+// Analog CRT Video Synthesizer Glitch Filter
+function applyCRTSynthFilter(srcCtx, destCtx, x, y, width, height) {
+  const imgData = srcCtx.getImageData(x, y, width, height);
+  const data = imgData.data;
+  const outData = new Uint8ClampedArray(data); // clone source pixels
+  
+  const time = performance.now() / 120;
+  const syncBarY = Math.floor((performance.now() / 12) % height);
+  
+  for (let cy = 0; cy < height; cy++) {
+    // Sinusoidal wavy distortion of rows
+    const wave = Math.sin(cy / 6 + time) * 6;
+    
+    // Shearing horizontal shift near the VHS tracking sync bar
+    const distToSync = Math.abs(cy - syncBarY);
+    const shear = distToSync < 12 ? (12 - distToSync) * 2.5 : 0;
+    
+    const shift = Math.floor(wave + shear);
+    
+    for (let cx = 0; cx < width; cx++) {
+      const idx = (cy * width + cx) * 4;
       
-      // Green (idx+1) and Alpha (idx+3) remain unchanged
+      let srcX = cx + shift;
+      if (srcX < 0) srcX = 0;
+      if (srcX >= width) srcX = width - 1;
+      
+      // Chromatic aberration shifts (Red offset left, Blue offset right)
+      const redOffset = 3;
+      const blueOffset = -3;
+      
+      let redX = srcX + redOffset;
+      let blueX = srcX + blueOffset;
+      if (redX < 0) redX = 0; if (redX >= width) redX = width - 1;
+      if (blueX < 0) blueX = 0; if (blueX >= width) blueX = width - 1;
+      
+      const srcIdx = (cy * width + srcX) * 4;
+      const redIdx = (cy * width + redX) * 4;
+      const blueIdx = (cy * width + blueX) * 4;
+      
+      // Glow/blowout color intensities
+      data[idx] = Math.min(255, outData[redIdx] * 1.35);          // Red
+      data[idx+1] = Math.min(255, outData[srcIdx+1] * 1.1);       // Green
+      data[idx+2] = Math.min(255, outData[blueIdx+2] * 1.45);      // Blue
+      
+      // Draw VHS horizontal tracking lines
+      if (distToSync < 3) {
+        data[idx] *= 0.15;
+        data[idx+1] *= 0.15;
+        data[idx+2] *= 0.15;
+      }
+    }
+  }
+  destCtx.putImageData(imgData, x, y);
+}
+
+// Charcoal Sketch Outline Filter (Inverse Sobel on Warm Parchment Paper)
+function applyCharcoalFilter(srcCtx, destCtx, x, y, width, height) {
+  const imgData = srcCtx.getImageData(x, y, width, height);
+  const data = imgData.data;
+  
+  // Create output buffer
+  const edgeData = destCtx.createImageData(width, height);
+  const edge = edgeData.data;
+  
+  // Grayscale helper
+  const gray = new Uint8Array(width * height);
+  for (let i = 0; i < data.length; i += 4) {
+    gray[i/4] = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
+  }
+  
+  // Sobel Edge operator
+  for (let cy = 1; cy < height - 1; cy++) {
+    for (let cx = 1; cx < width - 1; cx++) {
+      const idx = cy * width + cx;
+      
+      const val00 = gray[idx - width - 1];
+      const val01 = gray[idx - width];
+      const val02 = gray[idx - width + 1];
+      
+      const val10 = gray[idx - 1];
+      const val12 = gray[idx + 1];
+      
+      const val20 = gray[idx + width - 1];
+      const val21 = gray[idx + width];
+      const val22 = gray[idx + width + 1];
+      
+      const gx = (val02 + 2 * val12 + val22) - (val00 + 2 * val10 + val20);
+      const gy = (val20 + 2 * val21 + val22) - (val00 + 2 * val01 + val02);
+      
+      const gMagnitude = Math.sqrt(gx * gx + gy * gy);
+      
+      // Inverse value: high magnitude edges become dark/black, flat areas are paper color
+      const edgeIntensity = Math.max(0, 255 - gMagnitude * 2.2);
+      
+      const pixelIdx = idx * 4;
+      if (edgeIntensity < 130) {
+        // Charcoal gray stroke
+        edge[pixelIdx] = 32;       // Red
+        edge[pixelIdx+1] = 32;     // Green
+        edge[pixelIdx+2] = 40;     // Blue
+        edge[pixelIdx+3] = 255;
+      } else {
+        // Warm textured sketch paper background
+        edge[pixelIdx] = 244;      // Red
+        edge[pixelIdx+1] = 241;    // Green
+        edge[pixelIdx+2] = 224;    // Blue
+        edge[pixelIdx+3] = 255;
+      }
     }
   }
   
-  destCtx.putImageData(imgData, x, y);
+  destCtx.putImageData(edgeData, x, y);
 }
 
 // Compute the geometric center of a polygon
@@ -707,7 +835,308 @@ function getPolygonCentroid(vertices) {
   };
 }
 
-// Helper for distance between two 3D landmarks
+// Liquid Metallic Chrome Reflection Filter
+function applyChromeFilter(srcCtx, destCtx, x, y, width, height) {
+  const imgData = srcCtx.getImageData(x, y, width, height);
+  const data = imgData.data;
+  
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i+1];
+    const b = data[i+2];
+    
+    const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+    
+    // High frequency sine wave reflection bands
+    const v = Math.abs(Math.sin(luma * 0.048)) * 255;
+    
+    // Metallic chrome reflection mapping (silver base with iridescent magenta/cyan bands)
+    data[i] = Math.min(255, v * 0.72 + 65);       // Red (Silver with warm reflection)
+    data[i+1] = Math.min(255, v * 0.88 + 25);     // Green (Slightly lower green)
+    data[i+2] = Math.min(255, v * 1.0 + 15);      // Blue (Bright blue specular band)
+  }
+  
+  destCtx.putImageData(imgData, x, y);
+}
+
+// Full-Screen ASCII Depth & Object Telemetry Map
+function drawASCIIDepthMap() {
+  let hx = outputCanvas.width / 2;
+  let hy = outputCanvas.height / 2;
+  let handW = 150; // default proxy width
+  
+  if (handPolygon && handPolygon.length > 0) {
+    const centroid = getPolygonCentroid(handPolygon);
+    hx = centroid.x;
+    hy = centroid.y;
+    
+    // Compute hand bounding box width to estimate depth scale
+    let minX = Infinity, maxX = -Infinity;
+    handPolygon.forEach(pt => {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.x > maxX) maxX = pt.x;
+    });
+    handW = maxX - minX;
+  }
+  
+  // Hand scale depth proxy: close hand = larger grid scale
+  const depthScale = Math.min(1.6, Math.max(0.6, handW / 185));
+  
+  // Configure grid columns/rows dynamically based on depth
+  const cols = Math.floor(75 * depthScale);
+  const rows = Math.floor(55 * depthScale);
+  
+  offscreenCtx.drawImage(activeVideo, 0, 0, cols, rows);
+  const imgData = offscreenCtx.getImageData(0, 0, cols, rows);
+  const pixels = imgData.data;
+  
+  // Clear main canvas with dark HUD backdrop
+  ctx.fillStyle = "rgba(5, 8, 17, 0.96)";
+  ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+  
+  const cellW = outputCanvas.width / cols;
+  const cellH = outputCanvas.height / rows;
+  
+  // Set font
+  ctx.font = "bold 9px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  
+  const chars = "@%#*+=-:. ";
+  
+  for (let r = 0; r < rows; r += 2) {
+    for (let c = 0; c < cols; c++) {
+      const idx = (r * cols + c) * 4;
+      const red = pixels[idx];
+      const green = pixels[idx+1];
+      const blue = pixels[idx+2];
+      const luma = 0.299 * red + 0.587 * green + 0.114 * blue;
+      
+      const cx = c * cellW + cellW/2;
+      const cy = r * cellH + cellH/2;
+      
+      // Compute distance to hand center
+      const dx = cx - hx;
+      const dy = cy - hy;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      
+      // Calculate 3D perspective dome warp (depth perception)
+      const maxWarpDist = 200 * depthScale;
+      const warp = Math.max(0, 1 - dist / maxWarpDist);
+      
+      // Boost luminance near hand center to simulate depth sensor scan beam
+      const perceivedBrightness = Math.min(255, luma * (0.8 + warp * 0.95));
+      if (perceivedBrightness < 22) continue;
+      
+      const charIdx = Math.floor((perceivedBrightness / 255) * (chars.length - 1));
+      let char = chars[charIdx];
+      
+      // Check if coordinate falls inside any active object detection box
+      let isInsideObject = false;
+      let objectLabel = "";
+      if (enableObjectDetection && activeDetections.length > 0) {
+        for (let i = 0; i < activeDetections.length; i++) {
+          const det = activeDetections[i];
+          const box = det.boundingBox;
+          if (box) {
+            const bx = box.originX;
+            const by = box.originY;
+            const bw = box.width;
+            const bh = box.height;
+            if (cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh) {
+              isInsideObject = true;
+              objectLabel = det.categories[0].categoryName.toUpperCase();
+              break;
+            }
+          }
+        }
+      }
+      
+      // Character mapping: inside objects, we occasionally inject label letters!
+      if (isInsideObject && objectLabel && Math.random() < 0.25) {
+        const letterIdx = Math.floor((cx + cy) % objectLabel.length);
+        char = objectLabel[letterIdx];
+      }
+      
+      // Color coding:
+      if (isInsideObject) {
+        // High contrast amber/red for detected objects
+        ctx.fillStyle = `rgba(255, 78, 62, ${perceivedBrightness / 255})`;
+      } else if (warp > 0) {
+        // Cyan-to-blue glow gradient near hand to reflect depth
+        const gInt = Math.floor(180 * (1 - warp) + 255 * warp);
+        ctx.fillStyle = `rgba(0, ${gInt}, 254, ${perceivedBrightness / 255})`;
+      } else {
+        // Ambient dim phosphor green for background environment
+        ctx.fillStyle = `rgba(0, 242, 140, ${perceivedBrightness / 255 * 0.7})`;
+      }
+      
+      ctx.fillText(char, cx, cy);
+    }
+  }
+  
+  // Draw terminal HUD labels for object detection
+  if (enableObjectDetection && activeDetections.length > 0) {
+    activeDetections.forEach(det => {
+      const box = det.boundingBox;
+      if (box) {
+        const bx = box.originX;
+        const by = box.originY;
+        const bw = box.width;
+        const bh = box.height;
+        
+        ctx.strokeStyle = "rgba(255, 78, 62, 0.5)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]); // dashed retro HUD box
+        ctx.strokeRect(bx, by, bw, bh);
+        ctx.setLineDash([]);
+      }
+    });
+  }
+}
+
+// Unified Shader Draw Pipeline
+function drawShader(effect) {
+  if (effect === "cloak") {
+    if (isBgCaptured) {
+      ctx.drawImage(backgroundCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+    } else {
+      ctx.fillStyle = "rgba(5, 8, 17, 0.95)";
+      ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+      ctx.fillStyle = "var(--accent-cyan)";
+      ctx.font = "14px 'Space Grotesk'";
+      ctx.textAlign = "center";
+      ctx.fillText("CAPTURE BACKGROUND TO ACTIVATE CLOAK", outputCanvas.width / 2, outputCanvas.height / 2);
+    }
+  }
+  else if (effect === "crt_scanlines") {
+    ctx.save();
+    ctx.filter = "grayscale(100%) brightness(1.1) sepia(20%)";
+    ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
+    ctx.filter = "none";
+    
+    ctx.globalCompositeOperation = "color";
+    ctx.fillStyle = "rgba(0, 242, 254, 0.35)";
+    ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+    ctx.globalCompositeOperation = "source-over";
+    
+    // Draw scanlines
+    ctx.fillStyle = "rgba(5, 8, 17, 0.28)";
+    for (let sy = 0; sy < outputCanvas.height; sy += 3) {
+      ctx.fillRect(0, sy, outputCanvas.width, 1.5);
+    }
+    
+    // Phosphor sweep line
+    const sweepY = (performance.now() / 3.5) % (outputCanvas.height + 120) - 60;
+    const sweepGrad = ctx.createLinearGradient(0, sweepY - 60, 0, sweepY);
+    sweepGrad.addColorStop(0, "rgba(0, 242, 254, 0)");
+    sweepGrad.addColorStop(1, "rgba(0, 242, 254, 0.18)");
+    ctx.fillStyle = sweepGrad;
+    ctx.fillRect(0, sweepY - 60, outputCanvas.width, 60);
+    ctx.restore();
+  }
+  else if (effect === "line_halftone") {
+    // Clear light cream pop-art background
+    ctx.fillStyle = "#fffcf0";
+    ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+    
+    const sampleW = 80;
+    const sampleH = 60;
+    offscreenCtx.drawImage(activeVideo, 0, 0, sampleW, sampleH);
+    const imgData = offscreenCtx.getImageData(0, 0, sampleW, sampleH);
+    const pixels = imgData.data;
+    
+    ctx.strokeStyle = "#1b2a1a";
+    const cellW = outputCanvas.width / sampleW;
+    const cellH = outputCanvas.height / sampleH;
+    
+    // Draw diagonal grid segments
+    for (let sy = 0; sy < sampleH; sy += 2) {
+      for (let sx = 0; sx < sampleW; sx += 2) {
+        const idx = (sy * sampleW + sx) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx+1];
+        const b = pixels[idx+2];
+        const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+        
+        // Thickness inversely proportional to brightness (pop halftone effect)
+        const thickness = (1 - (luma / 255)) * 4.5;
+        if (thickness < 0.5) continue;
+        
+        const cx = sx * cellW;
+        const cy = sy * cellH;
+        
+        ctx.lineWidth = thickness;
+        ctx.beginPath();
+        ctx.moveTo(cx - cellW, cy - cellH);
+        ctx.lineTo(cx + cellW, cy + cellH);
+        ctx.stroke();
+      }
+    }
+  }
+  else if (effect === "dither") {
+    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    applyBayerDither(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+  }
+  else if (effect === "nokia") {
+    // Green LCD screen
+    ctx.fillStyle = "#c2d0a7";
+    ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+    
+    const sampleW = 84;
+    const sampleH = 48;
+    offscreenCtx.drawImage(activeVideo, 0, 0, sampleW, sampleH);
+    const imgData = offscreenCtx.getImageData(0, 0, sampleW, sampleH);
+    const pixels = imgData.data;
+    
+    const cellW = outputCanvas.width / sampleW;
+    const cellH = outputCanvas.height / sampleH;
+    
+    ctx.fillStyle = "#1b2a1a";
+    for (let sy = 0; sy < sampleH; sy++) {
+      for (let sx = 0; sx < sampleW; sx++) {
+        const idx = (sy * sampleW + sx) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx+1];
+        const b = pixels[idx+2];
+        const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+        
+        if (luma < 115) {
+          ctx.fillRect(sx * cellW, sy * cellH, cellW - 0.5, cellH - 0.5);
+        }
+      }
+    }
+  }
+  else if (effect === "crt_synth") {
+    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    applyCRTSynthFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+  }
+  else if (effect === "ascii_depth") {
+    drawASCIIDepthMap();
+  }
+  else if (effect === "thermal") {
+    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    applyThermalFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+  }
+  else if (effect === "wireframe") {
+    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    applySobelFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+  }
+  else if (effect === "charcoal") {
+    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    applyCharcoalFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+  }
+  else if (effect === "chrome") {
+    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    applyChromeFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+  }
+}
 function getDistance(p1, p2) {
   const dx = p1.x - p2.x;
   const dy = p1.y - p2.y;
@@ -744,18 +1173,29 @@ function shiftEffect(direction) {
   let newIndex = (currentIndex + direction + effectsList.length) % effectsList.length;
   selectedEffect = effectsList[newIndex];
   
+  // Increment cycle count for rotating 3D box faces!
+  if (direction > 0) {
+    pinchCycleCount++;
+  } else {
+    pinchCycleCount = (pinchCycleCount - 1 + effectsList.length) % effectsList.length;
+  }
+  
   // Sync HTML drop-down
   effectSelect.value = selectedEffect;
   
   // Setup HUD alert
   const effectNames = {
     cloak: "INVISIBILITY CLOAK",
-    duotone: "NEON DUOTONE",
-    scan_grid: "CYBERPUNK SCAN GRID",
+    crt_scanlines: "CRT MONITOR SCANLINES",
+    line_halftone: "LINE HALFTONE SCREEN",
+    dither: "MACINTOSH ORDERED DITHER",
+    nokia: "NOKIA 3310 LCD SCREEN",
+    crt_synth: "VHS ANALOG SYNTH GLITCH",
+    ascii_depth: "3D ASCII DEPTH TELEMETRY",
     thermal: "THERMAL HEATMAP",
     wireframe: "CYBERPUNK WIREFRAME"
   };
-  modeShiftMessage = `MODE SHIFT // ${effectNames[selectedEffect]}`;
+  modeShiftMessage = `MODE SHIFT // ${effectNames[selectedEffect] || selectedEffect.toUpperCase()}`;
   modeShiftMessageTime = performance.now();
 }
 
@@ -850,258 +1290,163 @@ function startAppLoop() {
       }
     }
 
-    // 3. Render Hand-tracked effects inside the Polygon
+    // 3. Render Hand-tracked visual effect (Full-screen ASCII Depth or 3D Layered Box HUD)
     if (handPolygon) {
-      // Setup alpha opacity for the shader overlays
-      ctx.save();
-      ctx.globalAlpha = effectOpacity;
-
-      // Canvas clipping to hand polygon path
-      ctx.beginPath();
-      ctx.moveTo(handPolygon[0].x, handPolygon[0].y);
-      for (let i = 1; i < handPolygon.length; i++) {
-        ctx.lineTo(handPolygon[i].x, handPolygon[i].y);
-      }
-      ctx.closePath();
-      ctx.clip();
-
-      // Apply selected visual shader
-      if (selectedEffect === "cloak") {
-        // Draw pre-captured background image
-        if (isBgCaptured) {
-          ctx.drawImage(backgroundCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-        } else {
-          // Draw visual notification text if background is not locked
-          ctx.fillStyle = "rgba(0, 242, 254, 0.05)";
-          ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-          ctx.fillStyle = "var(--accent-cyan)";
-          ctx.font = "16px 'Space Grotesk'";
-          ctx.textAlign = "center";
-          ctx.fillText("CAPTURE BACKGROUND TO ACTIVATE CLOAK", outputCanvas.width / 2, outputCanvas.height / 2);
-        }
-      } 
-      else if (selectedEffect === "holo_glitch") {
-        // Draw desaturated, cyan tinted hologram base
-        ctx.save();
-        ctx.filter = "grayscale(100%) brightness(0.9)";
-        ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
-        ctx.filter = "none";
+      if (selectedEffect === "ascii_depth") {
+        // Renders ASCII Depth map across the entire viewport
+        drawASCIIDepthMap();
+      } else {
+        // Draw the 3D layered rectangle around the 2D polygon
         
-        ctx.globalCompositeOperation = "color";
-        ctx.fillStyle = "rgba(0, 242, 254, 0.45)";
-        ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-        ctx.globalCompositeOperation = "source-over";
-        
-        // Random horizontal slice glitches
-        const now = performance.now();
-        if (Math.random() < 0.35) {
-          const numSlices = Math.floor(Math.random() * 4) + 2;
-          for (let s = 0; s < numSlices; s++) {
-            const sy = Math.random() * outputCanvas.height;
-            const sh = Math.random() * 35 + 8;
-            const disp = (Math.random() - 0.5) * 35; // displacement
-            ctx.drawImage(
-              outputCanvas, 
-              0, sy, outputCanvas.width, sh, 
-              disp, sy, outputCanvas.width, sh
-            );
-          }
-        }
-        
-        // Scroll scanline
-        ctx.strokeStyle = "rgba(0, 242, 254, 0.2)";
-        ctx.lineWidth = 1.5;
-        const scanY = (now / 3) % (outputCanvas.height + 100) - 50;
-        ctx.beginPath();
-        ctx.moveTo(0, scanY);
-        ctx.lineTo(outputCanvas.width, scanY);
-        ctx.stroke();
-        ctx.restore();
-      }
-      else if (selectedEffect === "ascii_codex") {
-        // Fill base with dark green-tinted background
-        ctx.fillStyle = "rgba(5, 12, 8, 0.95)";
-        ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-        
-        // Draw video downsampled onto offscreen canvas for fast pixel scanning
-        const sampleW = 60;
-        const sampleH = 45;
-        offscreenCtx.drawImage(activeVideo, 0, 0, sampleW, sampleH);
-        const imgData = offscreenCtx.getImageData(0, 0, sampleW, sampleH);
-        const pixels = imgData.data;
-        
-        // Draw matrix green/cyan ASCII symbols based on luma
-        ctx.font = "bold 9px monospace";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        
-        const cellW = outputCanvas.width / sampleW;
-        const cellH = outputCanvas.height / sampleH;
-        const chars = "@%#*+=-:. ";
-        
-        for (let sy = 0; sy < sampleH; sy += 2) { // step by 2 for spacing and speed
-          for (let sx = 0; sx < sampleW; sx++) {
-            const idx = (sy * sampleW + sx) * 4;
-            const r = pixels[idx];
-            const g = pixels[idx+1];
-            const b = pixels[idx+2];
-            
-            const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-            if (luma < 25) continue; // skip dark pixels
-            
-            const charIdx = Math.floor((luma / 255) * (chars.length - 1));
-            const char = chars[charIdx];
-            
-            const cx = sx * cellW + cellW / 2;
-            const cy = sy * cellH + cellH / 2;
-            
-            // Neon matrix green color with brightness mapping opacity
-            ctx.fillStyle = `rgba(0, 255, 140, ${luma / 255})`;
-            ctx.fillText(char, cx, cy);
-          }
-        }
-      }
-      else if (selectedEffect === "rgb_shift") {
-        // Render shift using offscreen buffer and pure-JS filter
-        offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-        const shiftVal = Math.floor(Math.sin(performance.now() / 120) * 8) + 4; // Sinusoidal shift 4-12px
-        applyRGBShiftFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height, shiftVal);
-        ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-      }
-      else if (selectedEffect === "neon_pulse") {
-        // High-contrast monochromatic stylized base
-        ctx.save();
-        ctx.filter = "grayscale(100%) contrast(160%) brightness(75%)";
-        ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
-        ctx.filter = "none";
-        
-        // Centroid wave rings
-        const centroid = getPolygonCentroid(handPolygon);
-        const now = performance.now() / 1000;
-        
-        ctx.lineWidth = 3;
-        ctx.shadowBlur = 10;
-        
-        // Render 3 pulsing rings with phase shifts
-        for (let r = 0; r < 3; r++) {
-          const phase = (now * 160 + r * 80) % 240;
-          const alpha = 1 - (phase / 240);
-          
-          // Cyan Ring
-          ctx.strokeStyle = `rgba(0, 242, 254, ${alpha * 0.75})`;
-          ctx.shadowColor = "rgba(0, 242, 254, 0.8)";
-          ctx.beginPath();
-          ctx.arc(centroid.x, centroid.y, phase, 0, Math.PI * 2);
-          ctx.stroke();
-          
-          // Magenta Ring (delayed phase offset)
-          ctx.strokeStyle = `rgba(255, 0, 128, ${alpha * 0.5})`;
-          ctx.shadowColor = "rgba(255, 0, 128, 0.8)";
-          ctx.beginPath();
-          ctx.arc(centroid.x, centroid.y, Math.max(0, phase - 25), 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        ctx.restore();
-      }
-      else if (selectedEffect === "night_vision") {
-        // Separated phosphor-green tint filter
-        ctx.save();
-        ctx.filter = "brightness(1.15) contrast(1.25) sepia(100%) hue-rotate(85deg) saturate(320%)";
-        ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
-        ctx.filter = "none";
-        
-        // Overlay digital noise
-        const staticData = offscreenCtx.createImageData(60, 45);
-        const pix = staticData.data;
-        for (let i = 0; i < pix.length; i += 4) {
-          const rand = Math.random() * 255;
-          pix[i] = rand;
-          pix[i+1] = rand;
-          pix[i+2] = rand;
-          pix[i+3] = 30; // low opacity static
-        }
-        offscreenCtx.putImageData(staticData, 0, 0);
-        ctx.globalCompositeOperation = "overlay";
-        ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-        ctx.globalCompositeOperation = "source-over";
-        
-        // Draw HUD targeting sights at centroid
-        const centroid = getPolygonCentroid(handPolygon);
-        ctx.strokeStyle = "rgba(50, 255, 50, 0.85)";
-        ctx.lineWidth = 1.5;
-        
-        // Reticle circles
-        ctx.beginPath();
-        ctx.arc(centroid.x, centroid.y, 25, 0, Math.PI * 2);
-        ctx.stroke();
-        
-        ctx.beginPath();
-        ctx.arc(centroid.x, centroid.y, 4, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(50, 255, 50, 0.85)";
-        ctx.fill();
-        
-        // Crosshair ticks
-        ctx.beginPath();
-        ctx.moveTo(centroid.x - 38, centroid.y); ctx.lineTo(centroid.x - 12, centroid.y);
-        ctx.moveTo(centroid.x + 12, centroid.y); ctx.lineTo(centroid.x + 38, centroid.y);
-        ctx.moveTo(centroid.x, centroid.y - 38); ctx.lineTo(centroid.x, centroid.y - 12);
-        ctx.moveTo(centroid.x, centroid.y + 12); ctx.lineTo(centroid.x, centroid.y + 38);
-        ctx.stroke();
-        
-        // Cyber coordinates text overlays
-        ctx.fillStyle = "rgba(50, 255, 50, 0.85)";
-        ctx.font = "bold 9px monospace";
-        ctx.fillText("SYS_LOCK // WEBCAM_TRACK", centroid.x + 42, centroid.y - 15);
-        ctx.fillText(`X: ${Math.round(centroid.x)} | Y: ${Math.round(centroid.y)}`, centroid.x + 42, centroid.y - 3);
-        ctx.fillText("RADAR_SWEEP: ACTIVE", centroid.x + 42, centroid.y + 9);
-        ctx.restore();
-      }
-      else if (selectedEffect === "thermal") {
-        // Render thermal effect via offscreen buffer for speed
-        offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-        applyThermalFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-        ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-      } 
-      else if (selectedEffect === "wireframe") {
-        // Render Sobel Wireframe filter
-        offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-        applySobelFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-        ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-      }
-      ctx.restore();
-
-      // Draw Glowing outline border
-      if (drawOutline) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(handPolygon[0].x, handPolygon[0].y);
-        for (let i = 1; i < handPolygon.length; i++) {
-          ctx.lineTo(handPolygon[i].x, handPolygon[i].y);
-        }
-        ctx.closePath();
-
-        ctx.strokeStyle = "var(--accent-cyan)";
-        ctx.lineWidth = 3;
-        ctx.shadowColor = "var(--accent-cyan)";
-        ctx.shadowBlur = 12;
-        ctx.stroke();
-
-        // Draw glowing points at vertex corners
-        ctx.fillStyle = "#ffffff";
+        // Calculate 2D bounding box from hand polygon
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         handPolygon.forEach(pt => {
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
-          ctx.fill();
+          if (pt.x < minX) minX = pt.x;
+          if (pt.y < minY) minY = pt.y;
+          if (pt.x > maxX) maxX = pt.x;
+          if (pt.y > maxY) maxY = pt.y;
         });
-        ctx.restore();
+        
+        const pad = 18;
+        minX = Math.max(0, minX - pad);
+        minY = Math.max(0, minY - pad);
+        maxX = Math.min(outputCanvas.width, maxX + pad);
+        maxY = Math.min(outputCanvas.height, maxY + pad);
+        
+        const W = maxX - minX;
+        const H = maxY - minY;
+        const CX = minX + W/2;
+        const CY = minY + H/2;
+        
+        // Calculate 3D perspective projection for back face
+        // Back face center is offset by a dynamic angle swinging over time
+        const time = performance.now() / 1500;
+        const angle = Math.sin(time) * 0.25 + 0.55; // swing angle in radians
+        const depth = 45;
+        const dx = depth * Math.cos(angle);
+        const dy = depth * Math.sin(angle);
+        const scale = 0.82; // scaled down back face for 3D depth perception
+        
+        // Define Vertices
+        const fTL = { x: minX, y: minY };
+        const fTR = { x: maxX, y: minY };
+        const fBR = { x: maxX, y: maxY };
+        const fBL = { x: minX, y: maxY };
+        
+        const bTL = { x: CX + (minX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
+        const bTR = { x: CX + (maxX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
+        const bBR = { x: CX + (maxX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
+        const bBL = { x: CX + (minX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
+        
+        // 5 Faces: Front, Top, Right, Bottom, Left
+        const faces = [
+          { name: "front", poly: [fTL, fTR, fBR, fBL] },
+          { name: "top", poly: [fTL, fTR, bTR, bTL] },
+          { name: "right", poly: [fTR, fBR, bBR, bTR] },
+          { name: "bottom", poly: [fBL, fBR, bBR, bBL] },
+          { name: "left", poly: [fTL, fBL, bBL, bTL] }
+        ];
+        
+        // Filter out cloak and ascii_depth from side faces
+        const activeFiltersList = effectsList.filter(e => e !== "cloak" && e !== "ascii_depth");
+        
+        // Render each face of the 3D box
+        faces.forEach((face, fIdx) => {
+          ctx.save();
+          ctx.globalAlpha = effectOpacity;
+          
+          // Clip rendering to this face's polygon path
+          ctx.beginPath();
+          ctx.moveTo(face.poly[0].x, face.poly[0].y);
+          for (let i = 1; i < face.poly.length; i++) {
+            ctx.lineTo(face.poly[i].x, face.poly[i].y);
+          }
+          ctx.closePath();
+          ctx.clip();
+          
+          // Front face gets the user's selected effect.
+          // Other side faces get rotating effects shifted by pinchCycleCount!
+          let faceEffect = selectedEffect;
+          if (face.name !== "front") {
+            const effIdx = (fIdx - 1 + pinchCycleCount) % activeFiltersList.length;
+            faceEffect = activeFiltersList[effIdx];
+          }
+          
+          // Draw shader inside the face
+          drawShader(faceEffect);
+          ctx.restore();
+          
+          // Draw face borders/outline
+          if (drawOutline) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(face.poly[0].x, face.poly[0].y);
+            for (let i = 1; i < face.poly.length; i++) {
+              ctx.lineTo(face.poly[i].x, face.poly[i].y);
+            }
+            ctx.closePath();
+            
+            // Front face gets bright cyan border, side faces get dim teal borders
+            ctx.strokeStyle = (face.name === "front") ? "var(--accent-cyan)" : "rgba(0, 242, 254, 0.4)";
+            ctx.lineWidth = (face.name === "front") ? 2 : 1;
+            if (face.name === "front") {
+              ctx.shadowColor = "var(--accent-cyan)";
+              ctx.shadowBlur = 8;
+            }
+            ctx.stroke();
+            ctx.restore();
+          }
+        });
+        
+        // Draw 3D wireframe connecting edges (connecting front and back faces)
+        if (drawOutline) {
+          ctx.save();
+          ctx.strokeStyle = "rgba(0, 242, 254, 0.55)";
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([2, 3]); // dashed depth connector lines
+          
+          const corners = [
+            [fTL, bTL],
+            [fTR, bTR],
+            [fBR, bBR],
+            [fBL, bBL]
+          ];
+          
+          corners.forEach(edge => {
+            ctx.beginPath();
+            ctx.moveTo(edge[0].x, edge[0].y);
+            ctx.lineTo(edge[1].x, edge[1].y);
+            ctx.stroke();
+          });
+          ctx.setLineDash([]);
+          
+          // Draw glowing corner points on the front face
+          ctx.fillStyle = "#ffffff";
+          ctx.shadowColor = "var(--accent-cyan)";
+          ctx.shadowBlur = 10;
+          [fTL, fTR, fBR, fBL].forEach(pt => {
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+            ctx.fill();
+          });
+          
+          // Render HUD coordinates next to front corners
+          ctx.fillStyle = "var(--accent-cyan)";
+          ctx.font = "8px monospace";
+          ctx.shadowBlur = 0;
+          ctx.fillText(`TL [${Math.round(fTL.x)},${Math.round(fTL.y)}]`, fTL.x - 45, fTL.y - 8);
+          ctx.fillText(`BR [${Math.round(fBR.x)},${Math.round(fBR.y)}]`, fBR.x + 10, fBR.y + 12);
+          ctx.restore();
+        }
       }
     }
 
     // 4. Perform AI Object Detection & HUD overlays
     if (enableObjectDetection && objectDetector && isModelsLoaded) {
       const detectResults = objectDetector.detectForVideo(activeVideo, timestamp);
+      activeDetections = detectResults.detections || [];
       
-      if (detectResults.detections && detectResults.detections.length > 0) {
+      if (activeDetections.length > 0) {
         detectResults.detections.forEach(det => {
           const category = det.categories[0];
           if (!category) return;
@@ -1158,6 +1503,8 @@ function startAppLoop() {
           }
         });
       }
+    } else {
+      activeDetections = [];
     }
 
     // 5. Draw HUD Message for Mode Shift
