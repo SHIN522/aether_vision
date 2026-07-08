@@ -312,12 +312,12 @@ fileUploadZone.addEventListener("dragover", (e) => {
 });
 
 fileUploadZone.addEventListener("dragleave", () => {
-  fileUploadZone.style.borderColor = "rgba(0, 242, 254, 0.3)";
+  fileUploadZone.style.borderColor = "rgba(236, 243, 158, 0.3)";
 });
 
 fileUploadZone.addEventListener("drop", (e) => {
   e.preventDefault();
-  fileUploadZone.style.borderColor = "rgba(0, 242, 254, 0.3)";
+  fileUploadZone.style.borderColor = "rgba(236, 243, 158, 0.3)";
   if (e.dataTransfer.files && e.dataTransfer.files[0]) {
     loadUploadedVideo(e.dataTransfer.files[0]);
   }
@@ -911,7 +911,7 @@ function drawASCIIDepthMap() {
   const pixels = imgData.data;
   
   // Clear main canvas with dark HUD backdrop
-  ctx.fillStyle = "rgba(5, 8, 17, 0.96)";
+  ctx.fillStyle = "rgba(19, 42, 19, 0.96)";
   ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
   
   const cellW = outputCanvas.width / cols;
@@ -988,10 +988,10 @@ function drawASCIIDepthMap() {
       } else if (warp > 0) {
         // Cyan-to-blue glow gradient near hand to reflect depth
         const gInt = Math.floor(180 * (1 - warp) + 255 * warp);
-        ctx.fillStyle = `rgba(0, ${gInt}, 254, ${perceivedBrightness / 255})`;
+        ctx.fillStyle = `rgba(236, 243, 158, ${perceivedBrightness / 255})`;
       } else {
         // Ambient dim phosphor green for background environment
-        ctx.fillStyle = `rgba(0, 242, 140, ${perceivedBrightness / 255 * 0.7})`;
+        ctx.fillStyle = `rgba(144, 169, 85, ${(perceivedBrightness / 255) * 0.75})`;
       }
       
       ctx.fillText(char, cx, cy);
@@ -1024,7 +1024,7 @@ function drawShader(effect) {
     if (isBgCaptured) {
       ctx.drawImage(backgroundCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
     } else {
-      ctx.fillStyle = "rgba(5, 8, 17, 0.95)";
+      ctx.fillStyle = "rgba(19, 42, 19, 0.95)";
       ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
       ctx.fillStyle = "var(--accent-cyan)";
       ctx.font = "14px 'Space Grotesk'";
@@ -1039,12 +1039,12 @@ function drawShader(effect) {
     ctx.filter = "none";
     
     ctx.globalCompositeOperation = "color";
-    ctx.fillStyle = "rgba(0, 242, 254, 0.35)";
+    ctx.fillStyle = "rgba(236, 243, 158, 0.35)";
     ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
     ctx.globalCompositeOperation = "source-over";
     
     // Draw scanlines
-    ctx.fillStyle = "rgba(5, 8, 17, 0.28)";
+    ctx.fillStyle = "rgba(19, 42, 19, 0.28)";
     for (let sy = 0; sy < outputCanvas.height; sy += 3) {
       ctx.fillRect(0, sy, outputCanvas.width, 1.5);
     }
@@ -1052,8 +1052,8 @@ function drawShader(effect) {
     // Phosphor sweep line
     const sweepY = (performance.now() / 3.5) % (outputCanvas.height + 120) - 60;
     const sweepGrad = ctx.createLinearGradient(0, sweepY - 60, 0, sweepY);
-    sweepGrad.addColorStop(0, "rgba(0, 242, 254, 0)");
-    sweepGrad.addColorStop(1, "rgba(0, 242, 254, 0.18)");
+    sweepGrad.addColorStop(0, "rgba(236, 243, 158, 0)");
+    sweepGrad.addColorStop(1, "rgba(236, 243, 158, 0.18)");
     ctx.fillStyle = sweepGrad;
     ctx.fillRect(0, sweepY - 60, outputCanvas.width, 60);
     ctx.restore();
@@ -1427,7 +1427,7 @@ function startAppLoop() {
             ctx.closePath();
             
             // Front face gets bright cyan border, side faces get dim teal borders
-            ctx.strokeStyle = (face.name === "front") ? "var(--accent-cyan)" : "rgba(0, 242, 254, 0.4)";
+            ctx.strokeStyle = (face.name === "front") ? "var(--accent-cyan)" : "rgba(236, 243, 158, 0.4)";
             ctx.lineWidth = (face.name === "front") ? 2 : 1;
             if (face.name === "front") {
               ctx.shadowColor = "var(--accent-cyan)";
@@ -1441,7 +1441,7 @@ function startAppLoop() {
         // Draw 3D wireframe connecting edges (connecting front and back faces)
         if (drawOutline) {
           ctx.save();
-          ctx.strokeStyle = "rgba(0, 242, 254, 0.55)";
+          ctx.strokeStyle = "rgba(236, 243, 158, 0.55)";
           ctx.lineWidth = 1.5;
           ctx.setLineDash([2, 3]); // dashed depth connector lines
           
@@ -1529,7 +1529,7 @@ function startAppLoop() {
             ctx.font = "bold 11px 'Space Grotesk'";
             const textWidth = ctx.measureText(textString).width;
             
-            ctx.fillStyle = "rgba(5, 8, 17, 0.85)";
+            ctx.fillStyle = "rgba(19, 42, 19, 0.85)";
             ctx.fillRect(x, y - 22, textWidth + 16, 22);
             ctx.strokeStyle = "var(--accent-cyan)";
             ctx.lineWidth = 1;
@@ -1551,7 +1551,7 @@ function startAppLoop() {
     if (modeShiftMessage && timestamp - modeShiftMessageTime < 1200) {
       ctx.save();
       ctx.font = "bold 18px 'Space Grotesk'";
-      ctx.fillStyle = "rgba(5, 8, 17, 0.8)";
+      ctx.fillStyle = "rgba(19, 42, 19, 0.8)";
       const textWidth = ctx.measureText(modeShiftMessage).width;
       
       const boxX = outputCanvas.width / 2 - textWidth / 2 - 20;
