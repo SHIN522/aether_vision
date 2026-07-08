@@ -63,6 +63,39 @@ body {
   background: radial-gradient(circle, transparent 30%, var(--bg-primary) 85%);
 }
 
+/* Floating iOS Ambient Glow Blobs */
+.glow-blob {
+  position: fixed;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.16;
+  z-index: -2;
+  pointer-events: none;
+  animation: float 28s infinite alternate ease-in-out;
+}
+
+.blob-1 {
+  background: var(--accent-cyan);
+  top: -120px;
+  right: -120px;
+}
+
+.blob-2 {
+  background: var(--accent-blue);
+  bottom: -180px;
+  left: -180px;
+  animation-delay: -7s;
+  animation-duration: 36s;
+}
+
+@keyframes float {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(60px, -40px) scale(1.1); }
+  100% { transform: translate(-40px, 80px) scale(0.95); }
+}
+
 /* Container */
 .app-container {
   display: flex;
