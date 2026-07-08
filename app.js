@@ -79,6 +79,17 @@ const detectionCtx = detectionCanvas.getContext("2d");
 detectionCanvas.width = 640;
 detectionCanvas.height = 360;
 
+// Pre-rendered offscreen caches for high performance (Render-To-Texture)
+const filterEffects = ["crt_scanlines", "dither", "nokia", "thermal", "wireframe"];
+const filterCache = {};
+filterEffects.forEach(eff => {
+  const canvas = document.createElement("canvas");
+  canvas.width = (eff === "nokia") ? 84 : 320;
+  canvas.height = (eff === "nokia") ? 48 : 180;
+  const ctx = canvas.getContext("2d");
+  filterCache[eff] = { canvas, ctx, isRendered: false };
+});
+
 // ==========================================================================
 // UI ELEMENTS REFERENCE
 // ==========================================================================
@@ -1042,7 +1053,7 @@ function drawASCIIDepthMap() {
   }
 }
 
-// Unified Shader Draw Pipeline
+// Unified Shader Draw Pipeline with Render-To-Texture caching
 function drawShader(effect) {
   if (effect === "cloak") {
     if (isBgCaptured) {
@@ -1055,151 +1066,85 @@ function drawShader(effect) {
       ctx.textAlign = "center";
       ctx.fillText("CAPTURE BACKGROUND TO ACTIVATE CLOAK", outputCanvas.width / 2, outputCanvas.height / 2);
     }
+    return;
   }
-  else if (effect === "crt_scanlines") {
-    ctx.save();
-    ctx.filter = "grayscale(100%) brightness(1.1) sepia(20%)";
-    ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
-    ctx.filter = "none";
-    
-    ctx.globalCompositeOperation = "color";
-    ctx.fillStyle = "rgba(236, 243, 158, 0.35)";
-    ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-    ctx.globalCompositeOperation = "source-over";
-    
-    // Draw scanlines
-    ctx.fillStyle = "rgba(19, 42, 19, 0.28)";
-    for (let sy = 0; sy < outputCanvas.height; sy += 3) {
-      ctx.fillRect(0, sy, outputCanvas.width, 1.5);
-    }
-    
-    // Phosphor sweep line
-    const sweepY = (performance.now() / 3.5) % (outputCanvas.height + 120) - 60;
-    const sweepGrad = ctx.createLinearGradient(0, sweepY - 60, 0, sweepY);
-    sweepGrad.addColorStop(0, "rgba(236, 243, 158, 0)");
-    sweepGrad.addColorStop(1, "rgba(236, 243, 158, 0.18)");
-    ctx.fillStyle = sweepGrad;
-    ctx.fillRect(0, sweepY - 60, outputCanvas.width, 60);
-    ctx.restore();
-  }
-  else if (effect === "line_halftone") {
-    // Clear light cream pop-art background
-    ctx.fillStyle = "#fffcf0";
-    ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-    
-    const sampleW = 120;
-    const sampleH = 90;
-    offscreenCtx.drawImage(activeVideo, 0, 0, sampleW, sampleH);
-    const imgData = offscreenCtx.getImageData(0, 0, sampleW, sampleH);
-    const pixels = imgData.data;
-    
-    ctx.strokeStyle = "#1b2a1a";
-    ctx.lineCap = "round";
-    
-    const cellW = outputCanvas.width / sampleW;
-    const cellH = outputCanvas.height / sampleH;
-    
-    // Draw continuous-looking diagonal lines (angled engraving)
-    for (let diag = 0; diag < sampleW + sampleH; diag += 3) {
-      let drawing = false;
+
+  const cache = filterCache[effect];
+  if (!cache) return;
+
+  if (!cache.isRendered) {
+    const cCtx = cache.ctx;
+    const cW = cache.canvas.width;
+    const cH = cache.canvas.height;
+
+    if (effect === "crt_scanlines") {
+      cCtx.save();
+      cCtx.filter = "grayscale(100%) brightness(1.1) sepia(20%)";
+      cCtx.drawImage(activeVideo, 0, 0, cW, cH);
+      cCtx.filter = "none";
       
-      for (let sx = 0; sx <= diag; sx++) {
-        const sy = diag - sx;
-        if (sx >= sampleW || sy >= sampleH) continue;
-        
-        const idx = (sy * sampleW + sx) * 4;
-        const r = pixels[idx];
-        const g = pixels[idx+1];
-        const b = pixels[idx+2];
-        const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-        
-        // Thickness maps inversely to brightness: dark area = thick line
-        const thickness = (1 - (luma / 255)) * 5.5;
-        
-        const cx = sx * cellW + cellW/2;
-        const cy = sy * cellH + cellH/2;
-        
-        if (thickness > 0.5) {
-          ctx.lineWidth = thickness;
-          if (!drawing) {
-            ctx.beginPath();
-            ctx.moveTo(cx, cy);
-            drawing = true;
-          } else {
-            ctx.lineTo(cx, cy);
-            ctx.stroke();
-            // Start a new path for next segment to allow variable width
-            ctx.beginPath();
-            ctx.moveTo(cx, cy);
+      cCtx.globalCompositeOperation = "color";
+      cCtx.fillStyle = "rgba(236, 243, 158, 0.35)";
+      cCtx.fillRect(0, 0, cW, cH);
+      cCtx.globalCompositeOperation = "source-over";
+      
+      // Draw scanlines
+      cCtx.fillStyle = "rgba(19, 42, 19, 0.28)";
+      for (let sy = 0; sy < cH; sy += 3) {
+        cCtx.fillRect(0, sy, cW, 1.5);
+      }
+      
+      // Phosphor sweep line
+      const sweepY = (performance.now() / 3.5) % (cH + 40) - 20;
+      const sweepGrad = cCtx.createLinearGradient(0, sweepY - 20, 0, sweepY);
+      sweepGrad.addColorStop(0, "rgba(236, 243, 158, 0)");
+      sweepGrad.addColorStop(1, "rgba(236, 243, 158, 0.18)");
+      cCtx.fillStyle = sweepGrad;
+      cCtx.fillRect(0, sweepY - 20, cW, 20);
+      cCtx.restore();
+    }
+    else if (effect === "dither") {
+      cCtx.drawImage(activeVideo, 0, 0, cW, cH);
+      applyBayerDither(cCtx, cCtx, 0, 0, cW, cH);
+    }
+    else if (effect === "nokia") {
+      // Draw raw video to cache first
+      cCtx.drawImage(activeVideo, 0, 0, cW, cH);
+      const imgData = cCtx.getImageData(0, 0, cW, cH);
+      const pixels = imgData.data;
+      
+      // Fill cache with green background
+      cCtx.fillStyle = "#c2d0a7";
+      cCtx.fillRect(0, 0, cW, cH);
+      
+      cCtx.fillStyle = "#1b2a1a";
+      for (let sy = 0; sy < cH; sy++) {
+        for (let sx = 0; sx < cW; sx++) {
+          const idx = (sy * cW + sx) * 4;
+          const r = pixels[idx];
+          const g = pixels[idx+1];
+          const b = pixels[idx+2];
+          const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+          
+          if (luma < 115) {
+            cCtx.fillRect(sx, sy, 1, 1);
           }
-        } else {
-          drawing = false;
         }
       }
     }
-  }
-  else if (effect === "dither") {
-    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    applyBayerDither(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-  }
-  else if (effect === "nokia") {
-    // Green LCD screen
-    ctx.fillStyle = "#c2d0a7";
-    ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-    
-    const sampleW = 84;
-    const sampleH = 48;
-    offscreenCtx.drawImage(activeVideo, 0, 0, sampleW, sampleH);
-    const imgData = offscreenCtx.getImageData(0, 0, sampleW, sampleH);
-    const pixels = imgData.data;
-    
-    const cellW = outputCanvas.width / sampleW;
-    const cellH = outputCanvas.height / sampleH;
-    
-    ctx.fillStyle = "#1b2a1a";
-    for (let sy = 0; sy < sampleH; sy++) {
-      for (let sx = 0; sx < sampleW; sx++) {
-        const idx = (sy * sampleW + sx) * 4;
-        const r = pixels[idx];
-        const g = pixels[idx+1];
-        const b = pixels[idx+2];
-        const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-        
-        if (luma < 115) {
-          ctx.fillRect(sx * cellW, sy * cellH, cellW - 0.5, cellH - 0.5);
-        }
-      }
+    else if (effect === "thermal") {
+      cCtx.drawImage(activeVideo, 0, 0, cW, cH);
+      applyThermalFilter(cCtx, cCtx, 0, 0, cW, cH);
     }
+    else if (effect === "wireframe") {
+      cCtx.drawImage(activeVideo, 0, 0, cW, cH);
+      applySobelFilter(cCtx, cCtx, 0, 0, cW, cH);
+    }
+    cache.isRendered = true;
   }
-  else if (effect === "crt_synth") {
-    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    applyCRTSynthFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-  }
-  else if (effect === "ascii_depth") {
-    drawASCIIDepthMap();
-  }
-  else if (effect === "thermal") {
-    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    applyThermalFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-  }
-  else if (effect === "wireframe") {
-    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    applySobelFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-  }
-  else if (effect === "charcoal") {
-    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    applyCharcoalFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-  }
-  else if (effect === "chrome") {
-    offscreenCtx.drawImage(activeVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    applyChromeFilter(offscreenCtx, offscreenCtx, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-    ctx.drawImage(offscreenCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
-  }
+
+  // Draw the pre-rendered high-resolution cached frame scaled to outputCanvas
+  ctx.drawImage(cache.canvas, 0, 0, outputCanvas.width, outputCanvas.height);
 }
 function getDistance(p1, p2) {
   const dx = p1.x - p2.x;
@@ -1283,6 +1228,11 @@ function startAppLoop() {
       fpsFrames = 0;
       lastFpsUpdate = time;
     }
+
+    // Reset shader pre-render cache flags for the new frame
+    filterEffects.forEach(eff => {
+      filterCache[eff].isRendered = false;
+    });
 
     // 1. Draw live feed frame on output canvas
     ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
