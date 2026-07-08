@@ -77,17 +77,28 @@ body {
 }
 
 .blob-1 {
-  background: var(--accent-cyan);
-  top: -120px;
-  right: -120px;
+  background: linear-gradient(135deg, #00f2fe, #4facfe);
+  top: -150px;
+  right: -150px;
 }
 
 .blob-2 {
-  background: var(--accent-blue);
-  bottom: -180px;
-  left: -180px;
-  animation-delay: -7s;
-  animation-duration: 36s;
+  background: linear-gradient(135deg, #ff007f, #7f00ff);
+  bottom: -200px;
+  left: -200px;
+  animation-delay: -8s;
+  animation-duration: 40s;
+}
+
+.blob-3 {
+  background: linear-gradient(135deg, #39ff14, #00ff7f);
+  top: 40%;
+  left: 20%;
+  width: 450px;
+  height: 450px;
+  opacity: 0.12;
+  animation-delay: -15s;
+  animation-duration: 48s;
 }
 
 @keyframes float {
@@ -154,10 +165,13 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(14, 22, 42, 0.4);
-  border: 1px solid rgba(0, 242, 254, 0.08);
-  padding: 6px 12px;
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  padding: 6px 14px;
+  border-radius: 50px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2);
 }
 
 .indicator {
@@ -183,13 +197,18 @@ body {
 
 /* Viewport Card */
 .viewport-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-glow);
-  border-radius: 12px;
-  backdrop-filter: blur(16px);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%);
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  border-radius: 24px;
+  backdrop-filter: blur(28px) saturate(210%);
+  -webkit-backdrop-filter: blur(28px) saturate(210%);
   position: relative;
   overflow: hidden;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: 
+    0 20px 40px rgba(0, 0, 0, 0.4), 
+    inset 0 2px 2px rgba(255, 255, 255, 0.4), 
+    inset 0 -2px 4px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -355,20 +374,28 @@ body {
 
 /* Sidebar Control Cards */
 .control-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-glow);
-  border-radius: 16px;
-  padding: 18px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  transition: all 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%);
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  border-radius: 24px;
+  padding: 20px;
+  box-shadow: 
+    0 16px 36px rgba(0, 0, 0, 0.35), 
+    inset 0 2px 2px rgba(255, 255, 255, 0.4), 
+    inset 0 -2px 4px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(28px) saturate(210%);
+  -webkit-backdrop-filter: blur(28px) saturate(210%);
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .control-card:hover {
-  border-color: var(--border-focus);
-  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.4), inset 0 1px 1.5px rgba(255, 255, 255, 0.25);
-  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow: 
+    0 24px 48px rgba(0, 0, 0, 0.45), 
+    inset 0 2.5px 3px rgba(255, 255, 255, 0.55), 
+    inset 0 -2.5px 6px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
+  transform: translateY(-3px);
 }
 
 .control-card h3 {
@@ -478,15 +505,24 @@ body {
 }
 
 .primary-btn {
-  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
-  border: none;
-  color: var(--bg-primary);
-  box-shadow: 0 2px 10px rgba(0, 242, 254, 0.2);
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0.05) 50%, rgba(0, 0, 0, 0.25) 100%), linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  border-radius: 50px;
+  color: #050811;
+  box-shadow: 
+    0 8px 24px rgba(0, 0, 0, 0.35), 
+    inset 0 3px 5px rgba(255, 255, 255, 0.65), 
+    inset 0 -3px 6px rgba(0, 0, 0, 0.3);
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.5);
 }
 
 .primary-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 15px rgba(0, 242, 254, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 
+    0 12px 30px rgba(0, 242, 254, 0.45), 
+    inset 0 4px 6px rgba(255, 255, 255, 0.85), 
+    inset 0 -3px 6px rgba(0, 0, 0, 0.35);
+  filter: brightness(1.05);
 }
 
 .primary-btn:active {
@@ -494,14 +530,24 @@ body {
 }
 
 .secondary-btn {
-  background-color: rgba(14, 22, 42, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.25) 0%, rgba(255, 255, 255, 0.05) 50%, rgba(0, 0, 0, 0.2) 100%), rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-radius: 50px;
   color: var(--text-primary);
+  box-shadow: 
+    0 8px 24px rgba(0, 0, 0, 0.3), 
+    inset 0 3px 5px rgba(255, 255, 255, 0.45), 
+    inset 0 -3px 6px rgba(0, 0, 0, 0.2);
 }
 
 .secondary-btn:hover:not(:disabled) {
-  border-color: var(--accent-cyan);
-  background-color: rgba(0, 242, 254, 0.05);
+  border-color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.12);
+  transform: translateY(-2px);
+  box-shadow: 
+    0 12px 30px rgba(0, 0, 0, 0.4), 
+    inset 0 4px 6px rgba(255, 255, 255, 0.6), 
+    inset 0 -3px 6px rgba(0, 0, 0, 0.2);
 }
 
 .secondary-btn:disabled {
@@ -529,25 +575,32 @@ body {
 
 .hud-select {
   width: 100%;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  border: 2px solid rgba(255, 255, 255, 0.25);
   color: var(--text-primary);
   font-family: var(--font-hud);
   font-size: 0.8rem;
-  padding: 10px;
-  border-radius: 8px;
+  padding: 11px 16px;
+  border-radius: 50px;
   outline: none;
   appearance: none;
   cursor: pointer;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  transition: all 0.25s ease;
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 
+    inset 0 2px 3px rgba(255, 255, 255, 0.35), 
+    inset 0 -2px 4px rgba(0, 0, 0, 0.15);
+  padding-right: 30px;
 }
 
 .hud-select:focus {
-  border-color: var(--accent-cyan);
-  background: rgba(255, 255, 255, 0.09);
-  box-shadow: 0 0 12px rgba(0, 242, 254, 0.25);
+  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: 
+    0 0 15px rgba(255, 255, 255, 0.15), 
+    inset 0 2px 3px rgba(255, 255, 255, 0.45), 
+    inset 0 -2px 4px rgba(0, 0, 0, 0.15);
 }
 
 .select-wrapper::after {
@@ -609,8 +662,8 @@ body {
 .switch {
   position: relative;
   display: inline-block;
-  width: 36px;
-  height: 20px;
+  width: 44px;
+  height: 24px;
 }
 
 .switch input {
@@ -630,31 +683,40 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(255, 255, 255, 0.1);
-  transition: .4s;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  border-radius: 30px;
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 
 .switch .slider:before {
   position: absolute;
   content: "";
-  height: 14px;
-  width: 14px;
+  height: 16px;
+  width: 16px;
   left: 3px;
-  bottom: 3px;
-  background-color: white;
-  transition: .4s;
+  bottom: 2.5px;
+  background: linear-gradient(to bottom, #ffffff 0%, #e8e8e8 100%);
+  border-radius: 50%;
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 
+    0 3px 6px rgba(0, 0, 0, 0.3), 
+    inset 0 1.5px 1.5px rgba(255, 255, 255, 0.9);
 }
 
 .switch input:checked + .slider {
-  background-color: var(--accent-cyan);
+  background: linear-gradient(135deg, rgba(0, 242, 254, 0.25) 0%, rgba(79, 172, 254, 0.25) 100%);
+  border-color: rgba(0, 242, 254, 0.5);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.2), inset 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 
 .switch input:checked + .slider:before {
-  transform: translateX(16px);
+  transform: translateX(20px);
 }
 
 .switch .slider.round {
-  border-radius: 10px;
+  border-radius: 30px;
 }
 
 .switch .slider.round:before {
@@ -728,15 +790,26 @@ body {
 /* Record Button */
 .record-btn {
   width: 100%;
-  border: 1px solid var(--accent-red);
-  background-color: rgba(255, 59, 48, 0.05);
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.05) 50%, rgba(0, 0, 0, 0.25) 100%), rgba(255, 59, 48, 0.08);
+  border: 2px solid rgba(255, 59, 48, 0.45);
+  border-radius: 50px;
   color: var(--accent-red);
+  box-shadow: 
+    0 8px 24px rgba(0, 0, 0, 0.25), 
+    inset 0 3px 5px rgba(255, 255, 255, 0.35), 
+    inset 0 -3px 6px rgba(0, 0, 0, 0.2);
 }
 
 .record-btn:hover {
-  background-color: var(--accent-red);
-  color: var(--bg-primary);
-  box-shadow: 0 0 15px rgba(255, 59, 48, 0.3);
+  transform: translateY(-2px);
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0.05) 50%, rgba(0, 0, 0, 0.25) 100%), linear-gradient(135deg, var(--accent-red), #ff453a);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.75);
+  box-shadow: 
+    0 12px 30px rgba(255, 59, 48, 0.4), 
+    inset 0 4px 6px rgba(255, 255, 255, 0.8), 
+    inset 0 -3px 6px rgba(0, 0, 0, 0.3);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .record-btn.recording {
