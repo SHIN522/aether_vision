@@ -45,6 +45,8 @@ let enableObjectDetection = false;
 let detectionThreshold = 0.3;
 let handPolygon = null;
 let lastObjectDetectionTime = 0;
+let lastHandResults = null;
+let lastHandTrackerTime = 0;
 let enableGlitchTrack = false;
 let handHistory = [];
 let wasHandTrackedLastFrame = false;
@@ -367,6 +369,8 @@ function initWebGL() {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 }
 
+let lastTextureUploadTime = 0;
+
 function renderWebGLShader(effectName) {
   if (!gl || !glProgram) return;
 
@@ -379,7 +383,12 @@ function renderWebGLShader(effectName) {
   gl.useProgram(glProgram);
 
   gl.bindTexture(gl.TEXTURE_2D, glTexture);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, activeVideo);
+  
+  const now = performance.now();
+  if (now - lastTextureUploadTime > 8) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, activeVideo);
+    lastTextureUploadTime = now;
+  }
 
   let effectInt = 0;
   if (effectName === "crt_scanlines") effectInt = 1;
@@ -477,7 +486,7 @@ async function startWebcam() {
       video: {
         width: { ideal: 1280 },
         height: { ideal: 720 },
-        frameRate: { ideal: 30 },
+        frameRate: { ideal: 60, min: 30 },
         deviceId: selectedCameraId ? { exact: selectedCameraId } : undefined
       },
       audio: false
@@ -2011,11 +2020,15 @@ function startAppLoop() {
     const timestamp = performance.now();
     handPolygon = null;
 
-    // 2. Perform Hand Tracking
+    // 2. Perform Hand Tracking (Throttled to run at most once every 33ms (~30 FPS))
     if (handLandmarker && isModelsLoaded) {
-      const handResults = handLandmarker.detectForVideo(activeVideo, timestamp);
+      if (timestamp - lastHandTrackerTime > 33) {
+        lastHandTrackerTime = timestamp;
+        lastHandResults = handLandmarker.detectForVideo(activeVideo, timestamp);
+      }
       
-      if (handResults.landmarks && handResults.landmarks.length > 0) {
+      const handResults = lastHandResults;
+      if (handResults && handResults.landmarks && handResults.landmarks.length > 0) {
         let anyHandIsFist = false;
         let allHandsActive = true;
         
