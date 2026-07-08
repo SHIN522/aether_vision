@@ -199,9 +199,34 @@
           </div>
         </div>
 
+        <!-- Motion Blob Tracker Card -->
+        <div class="control-card" id="card-motion-blob-tracker">
+          <h3><span class="card-num">06</span> MOTION BLOB TRACKER</h3>
+          <p class="card-desc">Tracks dynamic moving objects in the video feed using high-speed temporal differencing.</p>
+          <div class="toggle-control">
+            <label class="switch-label" for="toggle-motion-blob">
+              <span>Enable Motion Tracking</span>
+            </label>
+            <label class="switch">
+              <input type="checkbox" id="toggle-motion-blob">
+              <span class="slider round"></span>
+            </label>
+          </div>
+          <div class="select-control" style="margin-top: 15px;">
+            <label for="blob-mode-select">Tracking Mode</label>
+            <div class="pill-select-wrapper">
+              <select id="blob-mode-select" class="pill-select">
+                <option value="squares">Telemetry Squares</option>
+                <option value="isolate">Isolate Blobs</option>
+                <option value="track_all">Track All Items</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         <!-- Recorder Card -->
         <div class="control-card">
-          <h3><span class="card-num">06</span> EXPORT RECORDING</h3>
+          <h3><span class="card-num">07</span> EXPORT RECORDING</h3>
           <div class="recorder-toggle">
             <label class="radio-container">Processed (With Effects)
               <input type="radio" checked="checked" name="recording-type" value="processed">

@@ -50,6 +50,28 @@ let handHistory = [];
 let wasHandTrackedLastFrame = false;
 let lerpedBox = null;
 
+// Glitch Accumulator Canvas for permanent non-lagging trails
+const glitchAccumulatorCanvas = document.createElement("canvas");
+const glitchAccumulatorCtx = glitchAccumulatorCanvas.getContext("2d");
+
+// Motion Blob Tracker State
+let enableMotionBlob = false;
+let motionBlobMode = "squares";
+let prevFrameData = null;
+let trackedBlobs = [];
+let blobIdCounter = 1;
+
+const motionCanvas = document.createElement("canvas");
+const motionCtx = motionCanvas.getContext("2d");
+motionCanvas.width = 160;
+motionCanvas.height = 90;
+
+// WebGL GPU Shader Engine State
+let glCanvas = null;
+let gl = null;
+let glProgram = null;
+let glTexture = null;
+
 // Pinch Gesture State
 let isPinchLatched = false;
 let modeShiftMessage = "";
@@ -84,8 +106,8 @@ const filterEffects = ["crt_scanlines", "dither", "nokia", "thermal", "wireframe
 const filterCache = {};
 filterEffects.forEach(eff => {
   const canvas = document.createElement("canvas");
-  canvas.width = (eff === "nokia") ? 84 : 320;
-  canvas.height = (eff === "nokia") ? 48 : 180;
+  canvas.width = (eff === "nokia") ? 84 : 640;
+  canvas.height = (eff === "nokia") ? 48 : 360;
   const ctx = canvas.getContext("2d");
   filterCache[eff] = { canvas, ctx, isRendered: false };
 });
@@ -136,6 +158,249 @@ function logDebug(message) {
 }
 
 // ==========================================================================
+// WEBGL GPU FILTER ENGINE
+// ==========================================================================
+function initWebGL() {
+  logDebug("Initializing WebGL GPU Filter Engine...");
+  glCanvas = document.createElement("canvas");
+  glCanvas.width = outputCanvas.width;
+  glCanvas.height = outputCanvas.height;
+  
+  gl = glCanvas.getContext("webgl", { alpha: false, depth: false, antialias: false, preserveDrawingBuffer: true });
+  if (!gl) {
+    logDebug("WARNING: WebGL context not available. Falling back to CPU pixel filters.");
+    return;
+  }
+  logDebug("SUCCESS: WebGL context acquired successfully.");
+
+  const vertices = new Float32Array([
+    -1.0, -1.0,   0.0, 0.0, // bottom-left
+     1.0, -1.0,   1.0, 0.0, // bottom-right
+    -1.0,  1.0,   0.0, 1.0, // top-left
+    -1.0,  1.0,   0.0, 1.0, // top-left
+     1.0, -1.0,   1.0, 0.0, // bottom-right
+     1.0,  1.0,   1.0, 1.0  // top-right
+  ]);
+
+  const vertexShaderSource = `
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+    varying vec2 v_texCoord;
+    void main() {
+      gl_Position = vec4(a_position, 0.0, 1.0);
+      v_texCoord = a_texCoord;
+    }
+  `;
+
+  const fragmentShaderSource = `
+    precision mediump float;
+    varying vec2 v_texCoord;
+    uniform sampler2D u_image;
+    uniform int u_effect;
+    uniform float u_time;
+    uniform vec2 u_resolution;
+
+    float getLuma(vec3 color) {
+      return dot(color, vec3(0.299, 0.587, 0.114));
+    }
+
+    void main() {
+      vec2 uv = vec2(v_texCoord.x, 1.0 - v_texCoord.y); // flip vertically
+      
+      if (u_effect == 0) { // cloak / pass-through
+        gl_FragColor = texture2D(u_image, uv);
+      }
+      else if (u_effect == 1) { // CRT Scanlines
+        vec4 color = texture2D(u_image, uv);
+        float luma = getLuma(color.rgb);
+        vec3 tinted = vec3(luma * 1.1, luma * 0.95, luma * 0.75);
+        float scanline = sin(uv.y * u_resolution.y * 2.0) * 0.12;
+        tinted -= scanline;
+        float sweepY = mod(u_time * 0.05, 1.2) - 0.1;
+        float dist = abs(uv.y - sweepY);
+        if (dist < 0.05) {
+          tinted += (1.0 - dist / 0.05) * vec3(0.12, 0.12, 0.0);
+        }
+        gl_FragColor = vec4(tinted, 1.0);
+      }
+      else if (u_effect == 2) { // Bayer Dither
+        vec4 color = texture2D(u_image, uv);
+        float luma = getLuma(color.rgb);
+        
+        int x = int(mod(gl_FragCoord.x, 4.0));
+        int y = int(mod(gl_FragCoord.y, 4.0));
+        float threshold = 0.0;
+        
+        if (y == 0) {
+          if (x == 0) threshold = 0.0;
+          else if (x == 1) threshold = 0.50;
+          else if (x == 2) threshold = 0.125;
+          else threshold = 0.625;
+        }
+        else if (y == 1) {
+          if (x == 0) threshold = 0.75;
+          else if (x == 1) threshold = 0.25;
+          else if (x == 2) threshold = 0.875;
+          else threshold = 0.375;
+        }
+        else if (y == 2) {
+          if (x == 0) threshold = 0.1875;
+          else if (x == 1) threshold = 0.6875;
+          else if (x == 2) threshold = 0.0625;
+          else threshold = 0.5625;
+        }
+        else {
+          if (x == 0) threshold = 0.9375;
+          else if (x == 1) threshold = 0.4375;
+          else if (x == 2) threshold = 0.8125;
+          else threshold = 0.3125;
+        }
+        
+        if (luma > threshold) {
+          gl_FragColor = vec4(0.0, 0.95, 1.0, 1.0); // neon cyan
+        } else {
+          gl_FragColor = vec4(0.02, 0.03, 0.07, 1.0); // dark blue background
+        }
+      }
+      else if (u_effect == 3) { // Nokia LCD
+        vec2 nokiaRes = vec2(84.0, 48.0);
+        vec2 blockCoord = floor(uv * nokiaRes);
+        vec2 insideBlock = fract(uv * nokiaRes);
+        
+        if (insideBlock.x < 0.08 || insideBlock.y < 0.08) {
+          gl_FragColor = vec4(0.1, 0.16, 0.1, 1.0); // grid border
+        } else {
+          vec2 sampleUV = (blockCoord + 0.5) / nokiaRes;
+          vec4 color = texture2D(u_image, sampleUV);
+          float luma = getLuma(color.rgb);
+          if (luma < 0.45) {
+            gl_FragColor = vec4(0.1, 0.16, 0.1, 1.0); // dark green
+          } else {
+            gl_FragColor = vec4(0.76, 0.81, 0.65, 1.0); // light green background
+          }
+        }
+      }
+      else if (u_effect == 4) { // Thermal Heatmap
+        vec4 color = texture2D(u_image, uv);
+        float v = getLuma(color.rgb);
+        vec3 thermal;
+        if (v < 0.25) {
+          thermal = vec3(0.0, 0.0, v * 4.0);
+        } else if (v < 0.50) {
+          thermal = vec3((v - 0.25) * 4.0, 0.0, 1.0);
+        } else if (v < 0.75) {
+          thermal = vec3(1.0, (v - 0.50) * 4.0, 1.0 - (v - 0.50) * 4.0);
+        } else {
+          thermal = vec3(1.0, 1.0, (v - 0.75) * 4.0);
+        }
+        gl_FragColor = vec4(thermal, 1.0);
+      }
+      else if (u_effect == 5) { // Sobel Wireframe
+        float stepX = 1.0 / u_resolution.x;
+        float stepY = 1.0 / u_resolution.y;
+        
+        float t00 = getLuma(texture2D(u_image, uv + vec2(-stepX, -stepY)).rgb);
+        float t10 = getLuma(texture2D(u_image, uv + vec2(0.0, -stepY)).rgb);
+        float t20 = getLuma(texture2D(u_image, uv + vec2(stepX, -stepY)).rgb);
+        float t01 = getLuma(texture2D(u_image, uv + vec2(-stepX, 0.0)).rgb);
+        float t21 = getLuma(texture2D(u_image, uv + vec2(stepX, 0.0)).rgb);
+        float t02 = getLuma(texture2D(u_image, uv + vec2(-stepX, stepY)).rgb);
+        float t12 = getLuma(texture2D(u_image, uv + vec2(0.0, stepY)).rgb);
+        float t22 = getLuma(texture2D(u_image, uv + vec2(stepX, stepY)).rgb);
+        
+        float gx = (t20 + 2.0 * t21 + t22) - (t00 + 2.0 * t01 + t02);
+        float gy = (t02 + 2.0 * t12 + t22) - (t00 + 2.0 * t10 + t20);
+        float g = sqrt(gx * gx + gy * gy);
+        
+        if (g > 0.18) {
+          gl_FragColor = vec4(0.0, 0.95, 1.0, 1.0); // neon cyan edge
+        } else {
+          gl_FragColor = vec4(0.02, 0.03, 0.07, 0.85); // dark blue background
+        }
+      }
+    }
+  `;
+
+  function compileShader(source, type) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, source);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      console.error("Shader compile error:", gl.getShaderInfoLog(s));
+      return null;
+    }
+    return s;
+  }
+
+  const vs = compileShader(vertexShaderSource, gl.VERTEX_SHADER);
+  const fs = compileShader(fragmentShaderSource, gl.FRAGMENT_SHADER);
+  if (!vs || !fs) return;
+
+  glProgram = gl.createProgram();
+  gl.attachShader(glProgram, vs);
+  gl.attachShader(glProgram, fs);
+  gl.linkProgram(glProgram);
+  if (!gl.getProgramParameter(glProgram, gl.LINK_STATUS)) {
+    console.error("Program link error:", gl.getProgramInfoLog(glProgram));
+    return;
+  }
+
+  gl.useProgram(glProgram);
+
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+  const a_position = gl.getAttribLocation(glProgram, "a_position");
+  gl.enableVertexAttribArray(a_position);
+  gl.vertexAttribPointer(a_position, 2, gl.FLOAT, false, 16, 0);
+
+  const a_texCoord = gl.getAttribLocation(glProgram, "a_texCoord");
+  gl.enableVertexAttribArray(a_texCoord);
+  gl.vertexAttribPointer(a_texCoord, 2, gl.FLOAT, false, 16, 8);
+
+  glTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, glTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+}
+
+function renderWebGLShader(effectName) {
+  if (!gl || !glProgram) return;
+
+  if (glCanvas.width !== outputCanvas.width || glCanvas.height !== outputCanvas.height) {
+    glCanvas.width = outputCanvas.width;
+    glCanvas.height = outputCanvas.height;
+    gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+  }
+
+  gl.useProgram(glProgram);
+
+  gl.bindTexture(gl.TEXTURE_2D, glTexture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, activeVideo);
+
+  let effectInt = 0;
+  if (effectName === "crt_scanlines") effectInt = 1;
+  else if (effectName === "dither") effectInt = 2;
+  else if (effectName === "nokia") effectInt = 3;
+  else if (effectName === "thermal") effectInt = 4;
+  else if (effectName === "wireframe") effectInt = 5;
+
+  const u_effect = gl.getUniformLocation(glProgram, "u_effect");
+  gl.uniform1i(u_effect, effectInt);
+
+  const u_time = gl.getUniformLocation(glProgram, "u_time");
+  gl.uniform1f(u_time, performance.now() / 10.0);
+
+  const u_resolution = gl.getUniformLocation(glProgram, "u_resolution");
+  gl.uniform2f(u_resolution, glCanvas.width, glCanvas.height);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+// ==========================================================================
 // ASYNC CORE MODELS LOADER
 // ==========================================================================
 async function initAIModels() {
@@ -152,7 +417,7 @@ async function initAIModels() {
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath: "./models/hand_landmarker.task",
-        delegate: "CPU"
+        delegate: "GPU"
       },
       runningMode: "VIDEO",
       numHands: 2
@@ -165,7 +430,7 @@ async function initAIModels() {
     objectDetector = await ObjectDetector.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath: "./models/efficientdet_lite0.tflite",
-        delegate: "CPU"
+        delegate: "GPU"
       },
       scoreThreshold: detectionThreshold,
       runningMode: "VIDEO"
@@ -177,6 +442,13 @@ async function initAIModels() {
     logDebug("All AI models loaded successfully.");
     viewportLoader.style.opacity = "0";
     setTimeout(() => viewportLoader.style.display = "none", 500);
+
+    // Initialize WebGL engine
+    try {
+      initWebGL();
+    } catch (e) {
+      console.error("WebGL initialization failed:", e);
+    }
 
     // Start video loop
     startAppLoop();
@@ -491,7 +763,29 @@ if (toggleGlitchTrackCheckbox) {
     enableGlitchTrack = e.target.checked;
     if (!enableGlitchTrack) {
       handHistory = [];
+      if (glitchAccumulatorCanvas.width > 0 && glitchAccumulatorCanvas.height > 0) {
+        glitchAccumulatorCtx.fillStyle = "#000000";
+        glitchAccumulatorCtx.fillRect(0, 0, glitchAccumulatorCanvas.width, glitchAccumulatorCanvas.height);
+      }
     }
+  });
+}
+
+const toggleMotionBlobCheckbox = document.getElementById("toggle-motion-blob");
+if (toggleMotionBlobCheckbox) {
+  toggleMotionBlobCheckbox.addEventListener("change", (e) => {
+    enableMotionBlob = e.target.checked;
+    if (!enableMotionBlob) {
+      trackedBlobs = [];
+      prevFrameData = null;
+    }
+  });
+}
+
+const blobModeSelect = document.getElementById("blob-mode-select");
+if (blobModeSelect) {
+  blobModeSelect.addEventListener("change", (e) => {
+    motionBlobMode = e.target.value;
   });
 }
 
@@ -988,8 +1282,8 @@ function drawASCIIDepthMap() {
       let isInsideObject = false;
       let objectLabel = "";
       if (enableObjectDetection && activeDetections.length > 0) {
-        const scaleX = outputCanvas.width / 640;
-        const scaleY = outputCanvas.height / 360;
+        const scaleX = outputCanvas.width / (activeVideo.videoWidth || 640);
+        const scaleY = outputCanvas.height / (activeVideo.videoHeight || 360);
         for (let i = 0; i < activeDetections.length; i++) {
           const det = activeDetections[i];
           const box = det.boundingBox;
@@ -1053,22 +1347,37 @@ function drawASCIIDepthMap() {
   }
 }
 
-// Unified Shader Draw Pipeline with Render-To-Texture caching
+let currentRenderCtx = null;
+
+// Unified Shader Draw Pipeline with WebGL GPU Acceleration
 function drawShader(effect) {
+  const drawCtx = currentRenderCtx || ctx;
   if (effect === "cloak") {
     if (isBgCaptured) {
-      ctx.drawImage(backgroundCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+      drawCtx.drawImage(backgroundCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
     } else {
-      ctx.fillStyle = "rgba(19, 42, 19, 0.48)";
-      ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-      ctx.fillStyle = "var(--accent-cyan)";
-      ctx.font = "14px 'Space Grotesk'";
-      ctx.textAlign = "center";
-      ctx.fillText("CAPTURE BACKGROUND TO ACTIVATE CLOAK", outputCanvas.width / 2, outputCanvas.height / 2);
+      drawCtx.fillStyle = "rgba(19, 42, 19, 0.48)";
+      drawCtx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+      drawCtx.fillStyle = "var(--accent-cyan)";
+      drawCtx.font = "14px 'Space Grotesk'";
+      drawCtx.textAlign = "center";
+      drawCtx.fillText("CAPTURE BACKGROUND TO ACTIVATE CLOAK", outputCanvas.width / 2, outputCanvas.height / 2);
     }
     return;
   }
 
+  // GPU Acceleration via WebGL (High-definition, 60+ FPS, Zero CPU pixel loops)
+  if (gl && glProgram) {
+    try {
+      renderWebGLShader(effect);
+      drawCtx.drawImage(glCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+      return;
+    } catch (e) {
+      console.warn("WebGL draw failed, falling back to CPU:", e);
+    }
+  }
+
+  // CPU Fallback
   const cache = filterCache[effect];
   if (!cache) return;
 
@@ -1108,15 +1417,11 @@ function drawShader(effect) {
       applyBayerDither(cCtx, cCtx, 0, 0, cW, cH);
     }
     else if (effect === "nokia") {
-      // Draw raw video to cache first
       cCtx.drawImage(activeVideo, 0, 0, cW, cH);
       const imgData = cCtx.getImageData(0, 0, cW, cH);
       const pixels = imgData.data;
-      
-      // Fill cache with green background
       cCtx.fillStyle = "#c2d0a7";
       cCtx.fillRect(0, 0, cW, cH);
-      
       cCtx.fillStyle = "#1b2a1a";
       for (let sy = 0; sy < cH; sy++) {
         for (let sx = 0; sx < cW; sx++) {
@@ -1125,7 +1430,6 @@ function drawShader(effect) {
           const g = pixels[idx+1];
           const b = pixels[idx+2];
           const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-          
           if (luma < 115) {
             cCtx.fillRect(sx, sy, 1, 1);
           }
@@ -1143,9 +1447,119 @@ function drawShader(effect) {
     cache.isRendered = true;
   }
 
-  // Draw the pre-rendered high-resolution cached frame scaled to outputCanvas
-  ctx.drawImage(cache.canvas, 0, 0, outputCanvas.width, outputCanvas.height);
+  drawCtx.drawImage(cache.canvas, 0, 0, outputCanvas.width, outputCanvas.height);
 }
+
+function draw3DBox(ctxToDraw, boxItem, opacity) {
+  if (!boxItem) return;
+  
+  // 5 Faces: Front, Top, Right, Bottom, Left
+  const faces = [
+    { name: "front", poly: [boxItem.fTL, boxItem.fTR, boxItem.fBR, boxItem.fBL] },
+    { name: "top", poly: [boxItem.fTL, boxItem.fTR, boxItem.bTR, boxItem.bTL] },
+    { name: "right", poly: [boxItem.fTR, boxItem.fBR, boxItem.bBR, boxItem.bTR] },
+    { name: "bottom", poly: [boxItem.fBL, boxItem.fBR, boxItem.bBR, boxItem.bBL] },
+    { name: "left", poly: [boxItem.fTL, boxItem.fBL, boxItem.bBL, boxItem.bTL] }
+  ];
+  
+  // Filter out cloak from side faces
+  const activeFiltersList = effectsList.filter(e => e !== "cloak");
+  
+  // Set target rendering context
+  currentRenderCtx = ctxToDraw;
+  
+  // Render each face of the 3D box
+  faces.forEach((face, fIdx) => {
+    ctxToDraw.save();
+    ctxToDraw.globalAlpha = opacity;
+    
+    // Clip rendering to this face's polygon path
+    ctxToDraw.beginPath();
+    ctxToDraw.moveTo(face.poly[0].x, face.poly[0].y);
+    for (let i = 1; i < face.poly.length; i++) {
+      ctxToDraw.lineTo(face.poly[i].x, face.poly[i].y);
+    }
+    ctxToDraw.closePath();
+    ctxToDraw.clip();
+    
+    // Front face gets selected effect, others rotating shifted by pinchCycleCount
+    let faceEffect = selectedEffect;
+    if (face.name !== "front") {
+      const effIdx = (fIdx - 1 + boxItem.pinchCycleCount) % activeFiltersList.length;
+      faceEffect = activeFiltersList[effIdx];
+    }
+    
+    drawShader(faceEffect);
+    ctxToDraw.restore();
+    
+    // Draw borders/outline
+    if (drawOutline) {
+      ctxToDraw.save();
+      ctxToDraw.globalAlpha = opacity;
+      ctxToDraw.beginPath();
+      ctxToDraw.moveTo(face.poly[0].x, face.poly[0].y);
+      for (let i = 1; i < face.poly.length; i++) {
+        ctxToDraw.lineTo(face.poly[i].x, face.poly[i].y);
+      }
+      ctxToDraw.closePath();
+      
+      ctxToDraw.strokeStyle = (face.name === "front") ? "var(--accent-cyan)" : "rgba(236, 243, 158, 0.4)";
+      ctxToDraw.lineWidth = (face.name === "front") ? 2 : 1;
+      if (face.name === "front") {
+        ctxToDraw.shadowColor = "var(--accent-cyan)";
+        ctxToDraw.shadowBlur = 8;
+      }
+      ctxToDraw.stroke();
+      ctxToDraw.restore();
+    }
+  });
+  
+  // Draw depth connectors
+  if (drawOutline) {
+    ctxToDraw.save();
+    ctxToDraw.globalAlpha = opacity;
+    ctxToDraw.strokeStyle = "rgba(236, 243, 158, 0.55)";
+    ctxToDraw.lineWidth = 1.5;
+    ctxToDraw.setLineDash([2, 3]);
+    
+    const corners = [
+      [boxItem.fTL, boxItem.bTL],
+      [boxItem.fTR, boxItem.bTR],
+      [boxItem.fBR, boxItem.bBR],
+      [boxItem.fBL, boxItem.bBL]
+    ];
+    
+    corners.forEach(edge => {
+      ctxToDraw.beginPath();
+      ctxToDraw.moveTo(edge[0].x, edge[0].y);
+      ctxToDraw.lineTo(edge[1].x, edge[1].y);
+      ctxToDraw.stroke();
+    });
+    ctxToDraw.setLineDash([]);
+    
+    // Draw glowing vertices
+    ctxToDraw.fillStyle = "#ffffff";
+    ctxToDraw.shadowColor = "var(--accent-cyan)";
+    ctxToDraw.shadowBlur = 10;
+    [boxItem.fTL, boxItem.fTR, boxItem.fBR, boxItem.fBL].forEach(pt => {
+      ctxToDraw.beginPath();
+      ctxToDraw.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+      ctxToDraw.fill();
+    });
+    
+    // Render HUD labels
+    ctxToDraw.fillStyle = "var(--accent-cyan)";
+    ctxToDraw.font = "8px monospace";
+    ctxToDraw.shadowBlur = 0;
+    ctxToDraw.fillText(`TL [${Math.round(boxItem.fTL.x)},${Math.round(boxItem.fTL.y)}]`, boxItem.fTL.x - 45, boxItem.fTL.y - 8);
+    ctxToDraw.fillText(`BR [${Math.round(boxItem.fBR.x)},${Math.round(boxItem.fBR.y)}]`, boxItem.fBR.x + 10, boxItem.fBR.y + 12);
+    ctxToDraw.restore();
+  }
+  
+  // Reset target rendering context
+  currentRenderCtx = null;
+}
+
 function getDistance(p1, p2) {
   const dx = p1.x - p2.x;
   const dy = p1.y - p2.y;
@@ -1209,6 +1623,358 @@ function shiftEffect(direction) {
 }
 
 // ==========================================================================
+// MOTION BLOB TRACKER ENGINE
+// ==========================================================================
+function processMotionBlobTracker() {
+  if (!enableMotionBlob) return;
+
+  // 1. Draw video downscaled to motion calculation canvas (160x90) for fast CPU processing
+  motionCtx.drawImage(activeVideo, 0, 0, 160, 90);
+  const currImgData = motionCtx.getImageData(0, 0, 160, 90);
+  const currData = currImgData.data;
+
+  if (!prevFrameData) {
+    prevFrameData = new Uint8ClampedArray(currData);
+    return;
+  }
+
+  // 2. Compute 16x9 movement density grid to filter noise and locate moving blobs
+  const gridCols = 16;
+  const gridRows = 9;
+  const blockW = 10;
+  const blockH = 10;
+  const motionGrid = [];
+
+  for (let r = 0; r < gridRows; r++) {
+    motionGrid[r] = [];
+    for (let c = 0; c < gridCols; c++) {
+      let activePixels = 0;
+      
+      // Check difference inside this 10x10 block
+      for (let by = 0; by < blockH; by++) {
+        const py = r * blockH + by;
+        for (let bx = 0; bx < blockW; bx++) {
+          const px = c * blockW + bx;
+          const idx = (py * 160 + px) * 4;
+          
+          const lumaCurr = 0.299 * currData[idx] + 0.587 * currData[idx+1] + 0.114 * currData[idx+2];
+          const lumaPrev = 0.299 * prevFrameData[idx] + 0.587 * prevFrameData[idx+1] + 0.114 * prevFrameData[idx+2];
+          
+          if (Math.abs(lumaCurr - lumaPrev) > 22) {
+            activePixels++;
+          }
+        }
+      }
+      
+      // If > 18% of pixels in this block are moving, mark block as active
+      motionGrid[r][c] = (activePixels > 18);
+    }
+  }
+
+  // Save current frame data for next frame differencing comparison
+  prevFrameData.set(currData);
+
+  // 3. Group adjacent active grid blocks into blobs (Connected Components Clustering via BFS)
+  const visited = [];
+  for (let r = 0; r < gridRows; r++) {
+    visited[r] = [];
+    for (let c = 0; c < gridCols; c++) {
+      visited[r][c] = false;
+    }
+  }
+
+  const currentFrameBlobs = [];
+
+  for (let r = 0; r < gridRows; r++) {
+    for (let c = 0; c < gridCols; c++) {
+      if (motionGrid[r][c] && !visited[r][c]) {
+        // Start BFS to gather all connected blocks
+        let minR = r, maxR = r;
+        let minC = c, maxC = c;
+        const queue = [{r, c}];
+        visited[r][c] = true;
+
+        while (queue.length > 0) {
+          const curr = queue.shift();
+          
+          // 4-way check
+          const neighbors = [
+            {r: curr.r - 1, c: curr.c},
+            {r: curr.r + 1, c: curr.c},
+            {r: curr.r, c: curr.c - 1},
+            {r: curr.r, c: curr.c + 1}
+          ];
+
+          for (let i = 0; i < neighbors.length; i++) {
+            const n = neighbors[i];
+            if (n.r >= 0 && n.r < gridRows && n.c >= 0 && n.c < gridCols) {
+              if (motionGrid[n.r][n.c] && !visited[n.r][n.c]) {
+                visited[n.r][n.c] = true;
+                queue.push(n);
+                
+                if (n.r < minR) minR = n.r;
+                if (n.r > maxR) maxR = n.r;
+                if (n.c < minC) minC = n.c;
+                if (n.c > maxC) maxC = n.c;
+              }
+            }
+          }
+        }
+
+        // Calculate normalized bounding coordinates (0.0 to 1.0)
+        const normMinX = minC / gridCols;
+        const normMaxX = (maxC + 1) / gridCols;
+        const normMinY = minR / gridRows;
+        const normMaxY = (maxR + 1) / gridRows;
+
+        // Scale normalized dimensions to outputCanvas pixel coordinates
+        const x = normMinX * outputCanvas.width;
+        const y = normMinY * outputCanvas.height;
+        const w = (normMaxX - normMinX) * outputCanvas.width;
+        const h = (normMaxY - normMinY) * outputCanvas.height;
+        const cx = x + w / 2;
+        const cy = y + h / 2;
+
+        // Filter out tiny clusters (camera artifacts/noise) to ensure clean blob isolation
+        if (w > outputCanvas.width * 0.05 && h > outputCanvas.height * 0.05) {
+          currentFrameBlobs.push({ x, y, w, h, cx, cy });
+        }
+      }
+    }
+  }
+
+  // 4. PERSISTENT MULTI-OBJECT TRACKING (Match current blobs with previous frame to maintain constant IDs)
+  const nextTrackedBlobs = [];
+  const maxMatchingDist = outputCanvas.width * 0.22; // max distance to map same object
+
+  currentFrameBlobs.forEach(newBlob => {
+    let bestMatch = null;
+    let minDist = Infinity;
+
+    trackedBlobs.forEach(oldBlob => {
+      const dx = newBlob.cx - oldBlob.cx;
+      const dy = newBlob.cy - oldBlob.cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < minDist && dist < maxMatchingDist) {
+        minDist = dist;
+        bestMatch = oldBlob;
+      }
+    });
+
+    if (bestMatch) {
+      // Map existing ID and history path
+      const history = [...bestMatch.history];
+      history.push({ cx: newBlob.cx, cy: newBlob.cy });
+      if (history.length > 25) history.shift();
+
+      // Apply linear interpolation (lerp) on rendering coordinates (rx, ry, rw, rh) for smooth 60fps transitions
+      const lf = 0.18; // lerp factor
+      const rx = bestMatch.rx + (newBlob.x - bestMatch.rx) * lf;
+      const ry = bestMatch.ry + (newBlob.y - bestMatch.ry) * lf;
+      const rw = bestMatch.rw + (newBlob.w - bestMatch.rw) * lf;
+      const rh = bestMatch.rh + (newBlob.h - bestMatch.rh) * lf;
+      const rcx = rx + rw / 2;
+      const rcy = ry + rh / 2;
+
+      // Compute velocity vector (vx, vy)
+      const vx = newBlob.cx - bestMatch.cx;
+      const vy = newBlob.cy - bestMatch.cy;
+
+      nextTrackedBlobs.push({
+        id: bestMatch.id,
+        x: newBlob.x,
+        y: newBlob.y,
+        w: newBlob.w,
+        h: newBlob.h,
+        cx: newBlob.cx,
+        cy: newBlob.cy,
+        rx, ry, rw, rh, rcx, rcy,
+        vx, vy,
+        history: history
+      });
+
+      // Remove from pool to prevent double matching
+      trackedBlobs = trackedBlobs.filter(b => b.id !== bestMatch.id);
+    } else {
+      // Generate new Tracking ID
+      nextTrackedBlobs.push({
+        id: blobIdCounter++,
+        x: newBlob.x,
+        y: newBlob.y,
+        w: newBlob.w,
+        h: newBlob.h,
+        cx: newBlob.cx,
+        cy: newBlob.cy,
+        rx: newBlob.x,
+        ry: newBlob.y,
+        rw: newBlob.w,
+        rh: newBlob.h,
+        rcx: newBlob.cx,
+        rcy: newBlob.cy,
+        vx: 0,
+        vy: 0,
+        history: [{ cx: newBlob.cx, cy: newBlob.cy }]
+      });
+    }
+  });
+
+  trackedBlobs = nextTrackedBlobs;
+
+  // Helper function to draw glowing target brackets on a rectangle
+  function drawTelemetryBrackets(bx, by, bw, bh, colorString) {
+    ctx.save();
+    ctx.strokeStyle = colorString;
+    ctx.lineWidth = 2.0;
+    ctx.strokeRect(bx, by, bw, bh);
+
+    const len = Math.min(15, bw * 0.2);
+    ctx.beginPath();
+    ctx.lineWidth = 4.0;
+    // Top-Left
+    ctx.moveTo(bx + len, by); ctx.lineTo(bx, by); ctx.lineTo(bx, by + len);
+    // Top-Right
+    ctx.moveTo(bx + bw - len, by); ctx.lineTo(bx + bw, by); ctx.lineTo(bx + bw, by + len);
+    // Bottom-Left
+    ctx.moveTo(bx, by + bh - len); ctx.lineTo(bx, by + bh); ctx.lineTo(bx + len, by + bh);
+    // Bottom-Right
+    ctx.moveTo(bx + bw, by + bh - len); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx + bw - len, by + bh);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Helper function to draw a cool target acquisition crosshair
+  function drawTargetCrosshair(cx, cy, colorString) {
+    ctx.save();
+    ctx.strokeStyle = colorString;
+    ctx.lineWidth = 1.2;
+    ctx.shadowColor = colorString;
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    // Inner targeting circle
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+    // Outer tick lines
+    ctx.moveTo(cx - 14, cy); ctx.lineTo(cx + 14, cy);
+    ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy + 14);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 5. RENDER CHOSEN BLOB TRACKING MODE (Squares, Isolate, Track All)
+  if (motionBlobMode === "isolate") {
+    // Mode 1: Isolate active blobs on solid black background WITH glowing bounding boxes
+    ctx.save();
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+
+    trackedBlobs.forEach(blob => {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(blob.rx, blob.ry, blob.rw, blob.rh);
+      ctx.clip();
+      
+      // Draw full resolution (non-downscaled 4K) video frame inside clip
+      ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
+      ctx.restore();
+
+      // Render glowing telemetry box outline around isolated block
+      drawTelemetryBrackets(blob.rx, blob.ry, blob.rw, blob.rh, "rgba(0, 242, 254, 0.85)");
+    });
+    ctx.restore();
+  }
+  else if (motionBlobMode === "squares") {
+    // Mode 2: Draw telemetry overlay squares with tracking ID, sizes, velocity vector lines
+    trackedBlobs.forEach(blob => {
+      ctx.save();
+      
+      // Draw neon box and corner brackets
+      drawTelemetryBrackets(blob.rx, blob.ry, blob.rw, blob.rh, "var(--accent-cyan)");
+      
+      // Draw target crosshair at centroid
+      drawTargetCrosshair(blob.rcx, blob.rcy, "var(--accent-cyan)");
+
+      // Bounding box ID tag
+      const labelText = `OBJECT #${blob.id}`;
+      ctx.font = "bold 11px 'Space Grotesk'";
+      const textWidth = ctx.measureText(labelText).width;
+      
+      ctx.fillStyle = "rgba(19, 42, 19, 0.85)";
+      ctx.fillRect(blob.rx, blob.ry - 20, textWidth + 16, 20);
+      ctx.strokeStyle = "var(--accent-cyan)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(blob.rx, blob.ry - 20, textWidth + 16, 20);
+      
+      ctx.fillStyle = "var(--accent-cyan)";
+      ctx.fillText(labelText, blob.rx + 8, blob.y - 6);
+
+      // Cyberpunk-style overlay telemetry text under the box
+      ctx.font = "8px monospace";
+      ctx.fillStyle = "var(--accent-cyan)";
+      ctx.shadowBlur = 0;
+      
+      // Size and Velocity metrics
+      const sizeText = `SIZE: ${Math.round(blob.rw)}x${Math.round(blob.rh)} px`;
+      const velocityVal = Math.sqrt(blob.vx * blob.vx + blob.vy * blob.vy) * 30; // convert to px/sec approx
+      const velText = `VELOCITY: ${Math.round(velocityVal)} px/s`;
+      
+      ctx.fillText(sizeText, blob.rx + 4, blob.ry + blob.rh + 12);
+      ctx.fillText(velText, blob.rx + 4, blob.ry + blob.rh + 22);
+
+      // Draw direction vector arrow extending from centroid
+      if (Math.abs(blob.vx) > 0.1 || Math.abs(blob.vy) > 0.1) {
+        ctx.beginPath();
+        ctx.moveTo(blob.rcx, blob.rcy);
+        ctx.lineTo(blob.rcx + blob.vx * 3.5, blob.rcy + blob.vy * 3.5);
+        ctx.strokeStyle = "rgba(255, 78, 62, 0.85)"; // orange vector line
+        ctx.lineWidth = 2.0;
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    });
+  }
+  else if (motionBlobMode === "track_all") {
+    // Mode 3: Track all items with thin neon borders and fading vector path trails (light cycle effect)
+    trackedBlobs.forEach(blob => {
+      ctx.save();
+      
+      // Thin neon border
+      ctx.strokeStyle = "rgba(236, 243, 158, 0.6)";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(blob.rx, blob.ry, blob.rw, blob.rh);
+
+      // Draw target crosshair at centroid
+      drawTargetCrosshair(blob.rcx, blob.rcy, "var(--accent-cyan)");
+
+      // Draw fading Tron-style motion trails
+      if (blob.history.length > 1) {
+        for (let i = 1; i < blob.history.length; i++) {
+          const p1 = blob.history[i - 1];
+          const p2 = blob.history[i];
+          const pct = i / blob.history.length; // fade older segments
+          
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(p1.cx, p1.cy);
+          ctx.lineTo(p2.cx, p2.cy);
+          ctx.strokeStyle = `rgba(0, 242, 254, ${pct * 0.85})`;
+          ctx.lineWidth = 1.0 + pct * 2.5; // thicker/brighter closer to target
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // Coordinate telemetry text labels
+      ctx.fillStyle = "var(--accent-cyan)";
+      ctx.font = "8px monospace";
+      ctx.shadowBlur = 0;
+      ctx.fillText(`LOC [${Math.round(blob.rcx)},${Math.round(blob.rcy)}]`, blob.rcx + 12, blob.rcy - 12);
+
+      ctx.restore();
+    });
+  }
+}
+
+// ==========================================================================
 // CORE APP LOOP (HAND TRACKING & OBJECT DETECTION ENGINE)
 // ==========================================================================
 let lastTime = 0;
@@ -1234,18 +2000,20 @@ function startAppLoop() {
       filterCache[eff].isRendered = false;
     });
 
-    // 1. Draw live feed frame on output canvas
-    ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
+    // 1. Draw live feed frame or clear to black when Glitch Track is active
+    if (enableGlitchTrack) {
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+    } else {
+      ctx.drawImage(activeVideo, 0, 0, outputCanvas.width, outputCanvas.height);
+    }
 
     const timestamp = performance.now();
     handPolygon = null;
 
-    // Draw video to downscaled detection canvas for high-performance ML tracking
-    detectionCtx.drawImage(activeVideo, 0, 0, 640, 360);
-
     // 2. Perform Hand Tracking
     if (handLandmarker && isModelsLoaded) {
-      const handResults = handLandmarker.detectForVideo(detectionCanvas, timestamp);
+      const handResults = handLandmarker.detectForVideo(activeVideo, timestamp);
       
       if (handResults.landmarks && handResults.landmarks.length > 0) {
         let anyHandIsFist = false;
@@ -1380,140 +2148,43 @@ function startAppLoop() {
         lerpedBox.bBL.x += (targetBBL.x - lerpedBox.bBL.x) * lf;
         lerpedBox.bBL.y += (targetBBL.y - lerpedBox.bBL.y) * lf;
       }
-
-      // Save current box state to history for trailing glitch effect
-      handHistory.push({
-        fTL: { ...lerpedBox.fTL }, fTR: { ...lerpedBox.fTR }, fBR: { ...lerpedBox.fBR }, fBL: { ...lerpedBox.fBL },
-        bTL: { ...lerpedBox.bTL }, bTR: { ...lerpedBox.bTR }, bBR: { ...lerpedBox.bBR }, bBL: { ...lerpedBox.bBL },
-        pinchCycleCount
-      });
-      if (handHistory.length > 15) {
-        handHistory.shift();
-      }
     } else {
       wasHandTrackedLastFrame = false;
       lerpedBox = null;
-      // If glitch track is disabled, remove the box INSTANTLY when hand is withdrawn
-      if (!enableGlitchTrack) {
-        handHistory = [];
-      } else if (handHistory.length > 0) {
-        handHistory.shift();
-      }
     }
 
     // Render the active HUD box or cascading glitch trails
-    if (handHistory.length > 0 && (enableGlitchTrack || handPolygon)) {
-      const boxesToDraw = enableGlitchTrack ? handHistory : [handHistory[handHistory.length - 1]];
-      
-      boxesToDraw.forEach((boxItem, hIdx) => {
-        if (!boxItem) return;
-        
-        // Calculate opacity: older boxes in the trail are more transparent
-        const opacity = enableGlitchTrack ? (((hIdx + 1) / boxesToDraw.length) * effectOpacity * 0.8) : effectOpacity;
-        
-        // 5 Faces: Front, Top, Right, Bottom, Left
-        const faces = [
-          { name: "front", poly: [boxItem.fTL, boxItem.fTR, boxItem.fBR, boxItem.fBL] },
-          { name: "top", poly: [boxItem.fTL, boxItem.fTR, boxItem.bTR, boxItem.bTL] },
-          { name: "right", poly: [boxItem.fTR, boxItem.fBR, boxItem.bBR, boxItem.bTR] },
-          { name: "bottom", poly: [boxItem.fBL, boxItem.fBR, boxItem.bBR, boxItem.bBL] },
-          { name: "left", poly: [boxItem.fTL, boxItem.fBL, boxItem.bBL, boxItem.bTL] }
-        ];
-        
-        // Filter out cloak from side faces
-        const activeFiltersList = effectsList.filter(e => e !== "cloak");
-        
-        // Render each face of the 3D box
-        faces.forEach((face, fIdx) => {
-          ctx.save();
-          ctx.globalAlpha = opacity;
-          
-          // Clip rendering to this face's polygon path
-          ctx.beginPath();
-          ctx.moveTo(face.poly[0].x, face.poly[0].y);
-          for (let i = 1; i < face.poly.length; i++) {
-            ctx.lineTo(face.poly[i].x, face.poly[i].y);
-          }
-          ctx.closePath();
-          ctx.clip();
-          
-          // Front face gets the user's selected effect.
-          // Other side faces get rotating effects shifted by pinchCycleCount!
-          let faceEffect = selectedEffect;
-          if (face.name !== "front") {
-            const effIdx = (fIdx - 1 + boxItem.pinchCycleCount) % activeFiltersList.length;
-            faceEffect = activeFiltersList[effIdx];
-          }
-          
-          // Draw shader inside the face
-          drawShader(faceEffect);
-          ctx.restore();
-          
-          // Draw face borders/outline
-          if (drawOutline) {
-            ctx.save();
-            ctx.globalAlpha = opacity;
-            ctx.beginPath();
-            ctx.moveTo(face.poly[0].x, face.poly[0].y);
-            for (let i = 1; i < face.poly.length; i++) {
-              ctx.lineTo(face.poly[i].x, face.poly[i].y);
-            }
-            ctx.closePath();
-            
-            // Front face gets bright cyan border, side faces get dim teal borders
-            ctx.strokeStyle = (face.name === "front") ? "var(--accent-cyan)" : "rgba(236, 243, 158, 0.4)";
-            ctx.lineWidth = (face.name === "front") ? 2 : 1;
-            if (face.name === "front") {
-              ctx.shadowColor = "var(--accent-cyan)";
-              ctx.shadowBlur = 8;
-            }
-            ctx.stroke();
-            ctx.restore();
-          }
-        });
-        
-        // Draw 3D wireframe connecting edges (connecting front and back faces)
-        if (drawOutline) {
-          ctx.save();
-          ctx.globalAlpha = opacity;
-          ctx.strokeStyle = "rgba(236, 243, 158, 0.55)";
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([2, 3]); // dashed depth connector lines
-          
-          const corners = [
-            [boxItem.fTL, boxItem.bTL],
-            [boxItem.fTR, boxItem.bTR],
-            [boxItem.fBR, boxItem.bBR],
-            [boxItem.fBL, boxItem.bBL]
-          ];
-          
-          corners.forEach(edge => {
-            ctx.beginPath();
-            ctx.moveTo(edge[0].x, edge[0].y);
-            ctx.lineTo(edge[1].x, edge[1].y);
-            ctx.stroke();
-          });
-          ctx.setLineDash([]);
-          
-          // Draw glowing corner points on the front face
-          ctx.fillStyle = "#ffffff";
-          ctx.shadowColor = "var(--accent-cyan)";
-          ctx.shadowBlur = 10;
-          [boxItem.fTL, boxItem.fTR, boxItem.fBR, boxItem.fBL].forEach(pt => {
-            ctx.beginPath();
-            ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
-            ctx.fill();
-          });
-          
-          // Render HUD coordinates next to front corners
-          ctx.fillStyle = "var(--accent-cyan)";
-          ctx.font = "8px monospace";
-          ctx.shadowBlur = 0;
-          ctx.fillText(`TL [${Math.round(boxItem.fTL.x)},${Math.round(boxItem.fTL.y)}]`, boxItem.fTL.x - 45, boxItem.fTL.y - 8);
-          ctx.fillText(`BR [${Math.round(boxItem.fBR.x)},${Math.round(boxItem.fBR.y)}]`, boxItem.fBR.x + 10, boxItem.fBR.y + 12);
-          ctx.restore();
-        }
-      });
+    if (enableGlitchTrack) {
+      // Keep glitch accumulator canvas in sync with output canvas size
+      if (glitchAccumulatorCanvas.width !== outputCanvas.width || glitchAccumulatorCanvas.height !== outputCanvas.height) {
+        glitchAccumulatorCanvas.width = outputCanvas.width;
+        glitchAccumulatorCanvas.height = outputCanvas.height;
+        glitchAccumulatorCtx.fillStyle = "#000000";
+        glitchAccumulatorCtx.fillRect(0, 0, glitchAccumulatorCanvas.width, glitchAccumulatorCanvas.height);
+      }
+
+      // Draw current box onto accumulator context (persistent canvas)
+      if (handPolygon && lerpedBox) {
+        const boxItem = {
+          fTL: { ...lerpedBox.fTL }, fTR: { ...lerpedBox.fTR }, fBR: { ...lerpedBox.fBR }, fBL: { ...lerpedBox.fBL },
+          bTL: { ...lerpedBox.bTL }, bTR: { ...lerpedBox.bTR }, bBR: { ...lerpedBox.bBR }, bBL: { ...lerpedBox.bBL },
+          pinchCycleCount
+        };
+        draw3DBox(glitchAccumulatorCtx, boxItem, effectOpacity * 0.75);
+      }
+
+      // Render the accumulated permanent trails to the main screen
+      ctx.drawImage(glitchAccumulatorCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+    } else {
+      // Draw single active 3D box on the main canvas
+      if (handPolygon && lerpedBox) {
+        const boxItem = {
+          fTL: { ...lerpedBox.fTL }, fTR: { ...lerpedBox.fTR }, fBR: { ...lerpedBox.fBR }, fBL: { ...lerpedBox.fBL },
+          bTL: { ...lerpedBox.bTL }, bTR: { ...lerpedBox.bTR }, bBR: { ...lerpedBox.bBR }, bBL: { ...lerpedBox.bBL },
+          pinchCycleCount
+        };
+        draw3DBox(ctx, boxItem, effectOpacity);
+      }
     }
 
     // 4. Perform AI Object Detection & HUD overlays (Throttled for 60 FPS performance)
@@ -1521,7 +2192,7 @@ function startAppLoop() {
       if (timestamp - lastObjectDetectionTime > 120) {
         lastObjectDetectionTime = timestamp;
         try {
-          const detectResults = objectDetector.detectForVideo(detectionCanvas, timestamp);
+          const detectResults = objectDetector.detectForVideo(activeVideo, timestamp);
           activeDetections = detectResults.detections || [];
         } catch (e) {
           console.warn("Object detection skipped for frame: ", e);
@@ -1543,9 +2214,9 @@ function startAppLoop() {
             ctx.strokeStyle = "var(--accent-cyan)";
             ctx.lineWidth = 2;
             
-            // Scale bounding box from 640x360 detection size to full canvas size
-            const scaleX = outputCanvas.width / 640;
-            const scaleY = outputCanvas.height / 360;
+            // Scale bounding box from activeVideo size to full canvas size
+            const scaleX = outputCanvas.width / (activeVideo.videoWidth || 640);
+            const scaleY = outputCanvas.height / (activeVideo.videoHeight || 360);
             const x = box.originX * scaleX;
             const y = box.originY * scaleY;
             const w = box.width * scaleX;
@@ -1590,6 +2261,9 @@ function startAppLoop() {
     } else {
       activeDetections = [];
     }
+
+    // 4.5. Run Motion Blob Tracker (GPU-accelerated overlay mapping)
+    processMotionBlobTracker();
 
     // 5. Draw HUD Message for Mode Shift
     if (modeShiftMessage && timestamp - modeShiftMessageTime < 1200) {

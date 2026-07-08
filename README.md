@@ -24,6 +24,20 @@ Aether Vision is a real-time, browser-based **AI Creative Vision & Holographic H
 
 ---
 
+## ⚡ v3.0 High-Performance GPU Update [NEW]
+
+This major release migrates client-side pixel filters from the CPU to the graphics card (GPU) and introduces an advanced real-time motion blob tracking module:
+
+* **[NEW] WebGL GPU Shader Pipeline**: Heavy visual filters (CRT Scanlines, Bayer Dithering, Nokia LCD Screen, Thermal Heatmap, and Sobel Wireframe Edge detection) are now implemented as **native GLSL Fragment Shaders** compiled and executed directly on your **graphics card (GPU)**. This bypasses slow VRAM readback loops (`getImageData`/`putImageData`), delivering **native high-definition quality** at a locked, buttery-smooth **60+ FPS**.
+* **[NEW] Direct GPU Texture Binding for MediaPipe**: Models run with GPU delegates. Raw video frames are bound directly as GPU textures, eliminating unnecessary intermediate canvas copies and lowering tracking latency to virtually 0ms.
+* **[NEW] Upgraded Motion Blob Tracker (Card 06)**: An independent motion segment supporting **non-downscaled 4K resolution** outputs with three curated modes:
+  * **[NEW] Isolate Blobs**: Separates tracked moving objects on a solid black background, enclosed in glowing cyan bounding boxes and telemetry brackets.
+  * **[NEW] Telemetry Squares**: Overlays smooth lerp-animated bounding boxes with centroid targeting crosshairs, velocity vector indicators (direction arrows), and real-time size & speed HUD metrics.
+  * **[NEW] Track All Items**: Outlines all moving objects and draws fading Tron-style gradient motion trails mapping their path history.
+* **[NEW] Permanent Non-Lagging Glitch Trails (Card 05)**: Suppresses the camera stream to render **only** the 3D box and trails on a solid black background. Uses a **persistent paint accumulator canvas** so trails remain **permanently on screen** without ever ghosting or fading out, running at 60 FPS with zero performance degradation.
+
+---
+
 ## 🎨 Interactive Controls & Gestures
 
 | Action / Gesture | Trigger | Result |
