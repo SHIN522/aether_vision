@@ -48,6 +48,9 @@ let lastObjectDetectionTime = 0;
 let isMlProcessing = false;
 let enableGlitchTrack = false;
 let handHistory = [];
+let wasHandTrackedLastFrame = false;
+let lastMlRunTime = 0;
+let lerpedBox = null;
 
 // Pinch Gesture State
 let isPinchLatched = false;
@@ -69,14 +72,14 @@ let currentFps = 0;
 // Offscreen buffer for fast pixel manipulation (Thermal/Sobel)
 const offscreenCanvas = document.createElement("canvas");
 const offscreenCtx = offscreenCanvas.getContext("2d");
-offscreenCanvas.width = 320;
-offscreenCanvas.height = 180;
+offscreenCanvas.width = 160;
+offscreenCanvas.height = 90;
 
-// High-performance ML tracking buffer (320x180)
+// High-performance ML tracking buffer (160x90)
 const detectionCanvas = document.createElement("canvas");
 const detectionCtx = detectionCanvas.getContext("2d");
-detectionCanvas.width = 320;
-detectionCanvas.height = 180;
+detectionCanvas.width = 160;
+detectionCanvas.height = 90;
 
 // ==========================================================================
 // UI ELEMENTS REFERENCE
@@ -976,8 +979,8 @@ function drawASCIIDepthMap() {
       let isInsideObject = false;
       let objectLabel = "";
       if (enableObjectDetection && activeDetections.length > 0) {
-        const scaleX = outputCanvas.width / 640;
-        const scaleY = outputCanvas.height / 360;
+        const scaleX = outputCanvas.width / 160;
+        const scaleY = outputCanvas.height / 90;
         for (let i = 0; i < activeDetections.length; i++) {
           const det = activeDetections[i];
           const box = det.boundingBox;
@@ -1285,12 +1288,13 @@ function startAppLoop() {
 
     const timestamp = performance.now();
 
-    // 2. Perform Hand Tracking & Object Detection (Decoupled to run asynchronously and not block rendering)
-    if (!isMlProcessing && isModelsLoaded) {
+    // 2. Perform Hand Tracking & Object Detection (Decoupled & throttled to run asynchronously and not block rendering)
+    if (!isMlProcessing && isModelsLoaded && (timestamp - lastMlRunTime > 80)) {
       isMlProcessing = true;
+      lastMlRunTime = timestamp;
       
-      // Draw video to downscaled detection canvas for high-performance ML tracking
-      detectionCtx.drawImage(activeVideo, 0, 0, 320, 180);
+      // Draw video to downscaled detection canvas for high-performance ML tracking (160x90)
+      detectionCtx.drawImage(activeVideo, 0, 0, 160, 90);
       
       // Run MediaPipe inside setTimeout macro-task to let requestAnimationFrame draw the webcam frame first
       setTimeout(() => {
@@ -1381,6 +1385,12 @@ function startAppLoop() {
 
     // 3. Render Hand-tracked visual effect (3D Layered Box HUD with optional Blob Glitch Track trails)
     if (handPolygon) {
+      // Clear history of past tracking sessions if hand is newly re-detected to ensure trails overwrite instantly
+      if (!wasHandTrackedLastFrame) {
+        handHistory = [];
+      }
+      wasHandTrackedLastFrame = true;
+
       // Calculate 2D bounding box from hand polygon
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       handPolygon.forEach(pt => {
@@ -1409,35 +1419,66 @@ function startAppLoop() {
       const dy = depth * Math.sin(angle);
       const scale = 0.82; // scaled down back face for 3D depth perception
       
-      // Define Vertices
-      const fTL = { x: minX, y: minY };
-      const fTR = { x: maxX, y: minY };
-      const fBR = { x: maxX, y: maxY };
-      const fBL = { x: minX, y: maxY };
+      // Define Target Vertices
+      const targetFTL = { x: minX, y: minY };
+      const targetFTR = { x: maxX, y: minY };
+      const targetFBR = { x: maxX, y: maxY };
+      const targetFBL = { x: minX, y: maxY };
       
-      const bTL = { x: CX + (minX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
-      const bTR = { x: CX + (maxX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
-      const bBR = { x: CX + (maxX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
-      const bBL = { x: CX + (minX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
+      const targetBTL = { x: CX + (minX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
+      const targetBTR = { x: CX + (maxX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
+      const targetBBR = { x: CX + (maxX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
+      const targetBBL = { x: CX + (minX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
+
+      // Initialize or interpolate coordinates for buttery-smooth 60 FPS motion
+      if (!lerpedBox) {
+        lerpedBox = {
+          fTL: { ...targetFTL }, fTR: { ...targetFTR }, fBR: { ...targetFBR }, fBL: { ...targetFBL },
+          bTL: { ...targetBTL }, bTR: { ...targetBTR }, bBR: { ...targetBBR }, bBL: { ...targetBBL }
+        };
+      } else {
+        const lf = 0.25; // lerp speed coefficient
+        lerpedBox.fTL.x += (targetFTL.x - lerpedBox.fTL.x) * lf;
+        lerpedBox.fTL.y += (targetFTL.y - lerpedBox.fTL.y) * lf;
+        lerpedBox.fTR.x += (targetFTR.x - lerpedBox.fTR.x) * lf;
+        lerpedBox.fTR.y += (targetFTR.y - lerpedBox.fTR.y) * lf;
+        lerpedBox.fBR.x += (targetFBR.x - lerpedBox.fBR.x) * lf;
+        lerpedBox.fBR.y += (targetFBR.y - lerpedBox.fBR.y) * lf;
+        lerpedBox.fBL.x += (targetFBL.x - lerpedBox.fBL.x) * lf;
+        lerpedBox.fBL.y += (targetFBL.y - lerpedBox.fBL.y) * lf;
+        
+        lerpedBox.bTL.x += (targetBTL.x - lerpedBox.bTL.x) * lf;
+        lerpedBox.bTL.y += (targetBTL.y - lerpedBox.bTL.y) * lf;
+        lerpedBox.bTR.x += (targetBTR.x - lerpedBox.bTR.x) * lf;
+        lerpedBox.bTR.y += (targetBTR.y - lerpedBox.bTR.y) * lf;
+        lerpedBox.bBR.x += (targetBBR.x - lerpedBox.bBR.x) * lf;
+        lerpedBox.bBR.y += (targetBBR.y - lerpedBox.bBR.y) * lf;
+        lerpedBox.bBL.x += (targetBBL.x - lerpedBox.bBL.x) * lf;
+        lerpedBox.bBL.y += (targetBBL.y - lerpedBox.bBL.y) * lf;
+      }
 
       // Save current box state to history for trailing glitch effect
       handHistory.push({
-        fTL, fTR, fBR, fBL,
-        bTL, bTR, bBR, bBL,
+        fTL: { ...lerpedBox.fTL }, fTR: { ...lerpedBox.fTR }, fBR: { ...lerpedBox.fBR }, fBL: { ...lerpedBox.fBL },
+        bTL: { ...lerpedBox.bTL }, bTR: { ...lerpedBox.bTR }, bBR: { ...lerpedBox.bBR }, bBL: { ...lerpedBox.bBL },
         pinchCycleCount
       });
       if (handHistory.length > 15) {
         handHistory.shift();
       }
     } else {
-      // Decays/fades the trail away when the hand is withdrawn
-      if (handHistory.length > 0) {
+      wasHandTrackedLastFrame = false;
+      lerpedBox = null;
+      // If glitch track is disabled, remove the box INSTANTLY when hand is withdrawn
+      if (!enableGlitchTrack) {
+        handHistory = [];
+      } else if (handHistory.length > 0) {
         handHistory.shift();
       }
     }
 
     // Render the active HUD box or cascading glitch trails
-    if (handHistory.length > 0) {
+    if (handHistory.length > 0 && (enableGlitchTrack || handPolygon)) {
       const boxesToDraw = enableGlitchTrack ? handHistory : [handHistory[handHistory.length - 1]];
       
       boxesToDraw.forEach((boxItem, hIdx) => {
@@ -1567,9 +1608,9 @@ function startAppLoop() {
           ctx.strokeStyle = "var(--accent-cyan)";
           ctx.lineWidth = 2;
           
-          // Scale bounding box from 320x180 detection size to full canvas size
-          const scaleX = outputCanvas.width / 320;
-          const scaleY = outputCanvas.height / 180;
+          // Scale bounding box from 160x90 detection size to full canvas size
+          const scaleX = outputCanvas.width / 160;
+          const scaleY = outputCanvas.height / 90;
           const x = box.originX * scaleX;
           const y = box.originY * scaleY;
           const w = box.width * scaleX;
