@@ -50,7 +50,7 @@ let lastObjectDetectionTime = 0;
 let isPinchLatched = false;
 let modeShiftMessage = "";
 let modeShiftMessageTime = 0;
-const effectsList = ["cloak", "crt_scanlines", "line_halftone", "dither", "nokia", "crt_synth", "ascii_depth", "thermal", "wireframe"];
+const effectsList = ["cloak", "crt_scanlines", "dither", "nokia", "thermal", "wireframe"];
 let pinchCycleCount = 0;
 
 // Matrix Rain Effect State
@@ -1492,9 +1492,6 @@ function startAppLoop() {
           ctx.restore();
         }
       }
-    } else {
-      // No hand tracked: apply selected shader to the entire screen!
-      drawShader(selectedEffect);
     }
 
     // 4. Perform AI Object Detection & HUD overlays (Throttled for 60 FPS performance)
