@@ -45,6 +45,10 @@ let enableObjectDetection = false;
 let detectionThreshold = 0.3;
 let handPolygon = null;
 let lastObjectDetectionTime = 0;
+let enableGlitchTrack = false;
+let handHistory = [];
+let wasHandTrackedLastFrame = false;
+let lerpedBox = null;
 
 // Pinch Gesture State
 let isPinchLatched = false;
@@ -469,6 +473,16 @@ effectOpacityInput.addEventListener("input", (e) => {
 toggleOutlineCheckbox.addEventListener("change", (e) => {
   drawOutline = e.target.checked;
 });
+
+const toggleGlitchTrackCheckbox = document.getElementById("toggle-glitch-track");
+if (toggleGlitchTrackCheckbox) {
+  toggleGlitchTrackCheckbox.addEventListener("change", (e) => {
+    enableGlitchTrack = e.target.checked;
+    if (!enableGlitchTrack) {
+      handHistory = [];
+    }
+  });
+}
 
 toggleObjectDetectionCheckbox.addEventListener("change", (e) => {
   enableObjectDetection = e.target.checked;
@@ -1343,70 +1357,126 @@ function startAppLoop() {
       }
     }
 
-    // 3. Render Hand-tracked visual effect (Full-screen ASCII Depth or 3D Layered Box HUD)
+    // 3. Render Hand-tracked visual effect (3D Layered Box HUD with optional Blob Glitch Track trails)
     if (handPolygon) {
-      if (selectedEffect === "ascii_depth") {
-        // Renders ASCII Depth map across the entire viewport
-        drawASCIIDepthMap();
+      // Clear history of past tracking sessions if hand is newly re-detected to ensure trails overwrite instantly
+      if (!wasHandTrackedLastFrame) {
+        handHistory = [];
+      }
+      wasHandTrackedLastFrame = true;
+
+      // Calculate 2D bounding box from hand polygon
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      handPolygon.forEach(pt => {
+        if (pt.x < minX) minX = pt.x;
+        if (pt.y < minY) minY = pt.y;
+        if (pt.x > maxX) maxX = pt.x;
+        if (pt.y > maxY) maxY = pt.y;
+      });
+      
+      const pad = 18;
+      minX = Math.max(0, minX - pad);
+      minY = Math.max(0, minY - pad);
+      maxX = Math.min(outputCanvas.width, maxX + pad);
+      maxY = Math.min(outputCanvas.height, maxY + pad);
+      
+      const W = maxX - minX;
+      const H = maxY - minY;
+      const CX = minX + W/2;
+      const CY = minY + H/2;
+      
+      // Calculate 3D perspective projection for back face
+      const time = performance.now() / 1500;
+      const angle = Math.sin(time) * 0.25 + 0.55; // swing angle in radians
+      const depth = 45;
+      const dx = depth * Math.cos(angle);
+      const dy = depth * Math.sin(angle);
+      const scale = 0.82; // scaled down back face for 3D depth perception
+      
+      // Define Target Vertices
+      const targetFTL = { x: minX, y: minY };
+      const targetFTR = { x: maxX, y: minY };
+      const targetFBR = { x: maxX, y: maxY };
+      const targetFBL = { x: minX, y: maxY };
+      
+      const targetBTL = { x: CX + (minX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
+      const targetBTR = { x: CX + (maxX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
+      const targetBBR = { x: CX + (maxX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
+      const targetBBL = { x: CX + (minX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
+
+      // Initialize or interpolate coordinates for buttery-smooth 60 FPS motion
+      if (!lerpedBox) {
+        lerpedBox = {
+          fTL: { ...targetFTL }, fTR: { ...targetFTR }, fBR: { ...targetFBR }, fBL: { ...targetFBL },
+          bTL: { ...targetBTL }, bTR: { ...targetBTR }, bBR: { ...targetBBR }, bBL: { ...targetBBL }
+        };
       } else {
-        // Draw the 3D layered rectangle around the 2D polygon
+        const lf = 0.25; // lerp speed coefficient
+        lerpedBox.fTL.x += (targetFTL.x - lerpedBox.fTL.x) * lf;
+        lerpedBox.fTL.y += (targetFTL.y - lerpedBox.fTL.y) * lf;
+        lerpedBox.fTR.x += (targetFTR.x - lerpedBox.fTR.x) * lf;
+        lerpedBox.fTR.y += (targetFTR.y - lerpedBox.fTR.y) * lf;
+        lerpedBox.fBR.x += (targetFBR.x - lerpedBox.fBR.x) * lf;
+        lerpedBox.fBR.y += (targetFBR.y - lerpedBox.fBR.y) * lf;
+        lerpedBox.fBL.x += (targetFBL.x - lerpedBox.fBL.x) * lf;
+        lerpedBox.fBL.y += (targetFBL.y - lerpedBox.fBL.y) * lf;
         
-        // Calculate 2D bounding box from hand polygon
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        handPolygon.forEach(pt => {
-          if (pt.x < minX) minX = pt.x;
-          if (pt.y < minY) minY = pt.y;
-          if (pt.x > maxX) maxX = pt.x;
-          if (pt.y > maxY) maxY = pt.y;
-        });
+        lerpedBox.bTL.x += (targetBTL.x - lerpedBox.bTL.x) * lf;
+        lerpedBox.bTL.y += (targetBTL.y - lerpedBox.bTL.y) * lf;
+        lerpedBox.bTR.x += (targetBTR.x - lerpedBox.bTR.x) * lf;
+        lerpedBox.bTR.y += (targetBTR.y - lerpedBox.bTR.y) * lf;
+        lerpedBox.bBR.x += (targetBBR.x - lerpedBox.bBR.x) * lf;
+        lerpedBox.bBR.y += (targetBBR.y - lerpedBox.bBR.y) * lf;
+        lerpedBox.bBL.x += (targetBBL.x - lerpedBox.bBL.x) * lf;
+        lerpedBox.bBL.y += (targetBBL.y - lerpedBox.bBL.y) * lf;
+      }
+
+      // Save current box state to history for trailing glitch effect
+      handHistory.push({
+        fTL: { ...lerpedBox.fTL }, fTR: { ...lerpedBox.fTR }, fBR: { ...lerpedBox.fBR }, fBL: { ...lerpedBox.fBL },
+        bTL: { ...lerpedBox.bTL }, bTR: { ...lerpedBox.bTR }, bBR: { ...lerpedBox.bBR }, bBL: { ...lerpedBox.bBL },
+        pinchCycleCount
+      });
+      if (handHistory.length > 15) {
+        handHistory.shift();
+      }
+    } else {
+      wasHandTrackedLastFrame = false;
+      lerpedBox = null;
+      // If glitch track is disabled, remove the box INSTANTLY when hand is withdrawn
+      if (!enableGlitchTrack) {
+        handHistory = [];
+      } else if (handHistory.length > 0) {
+        handHistory.shift();
+      }
+    }
+
+    // Render the active HUD box or cascading glitch trails
+    if (handHistory.length > 0 && (enableGlitchTrack || handPolygon)) {
+      const boxesToDraw = enableGlitchTrack ? handHistory : [handHistory[handHistory.length - 1]];
+      
+      boxesToDraw.forEach((boxItem, hIdx) => {
+        if (!boxItem) return;
         
-        const pad = 18;
-        minX = Math.max(0, minX - pad);
-        minY = Math.max(0, minY - pad);
-        maxX = Math.min(outputCanvas.width, maxX + pad);
-        maxY = Math.min(outputCanvas.height, maxY + pad);
-        
-        const W = maxX - minX;
-        const H = maxY - minY;
-        const CX = minX + W/2;
-        const CY = minY + H/2;
-        
-        // Calculate 3D perspective projection for back face
-        // Back face center is offset by a dynamic angle swinging over time
-        const time = performance.now() / 1500;
-        const angle = Math.sin(time) * 0.25 + 0.55; // swing angle in radians
-        const depth = 45;
-        const dx = depth * Math.cos(angle);
-        const dy = depth * Math.sin(angle);
-        const scale = 0.82; // scaled down back face for 3D depth perception
-        
-        // Define Vertices
-        const fTL = { x: minX, y: minY };
-        const fTR = { x: maxX, y: minY };
-        const fBR = { x: maxX, y: maxY };
-        const fBL = { x: minX, y: maxY };
-        
-        const bTL = { x: CX + (minX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
-        const bTR = { x: CX + (maxX - CX)*scale + dx, y: CY + (minY - CY)*scale + dy };
-        const bBR = { x: CX + (maxX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
-        const bBL = { x: CX + (minX - CX)*scale + dx, y: CY + (maxY - CY)*scale + dy };
+        // Calculate opacity: older boxes in the trail are more transparent
+        const opacity = enableGlitchTrack ? (((hIdx + 1) / boxesToDraw.length) * effectOpacity * 0.8) : effectOpacity;
         
         // 5 Faces: Front, Top, Right, Bottom, Left
         const faces = [
-          { name: "front", poly: [fTL, fTR, fBR, fBL] },
-          { name: "top", poly: [fTL, fTR, bTR, bTL] },
-          { name: "right", poly: [fTR, fBR, bBR, bTR] },
-          { name: "bottom", poly: [fBL, fBR, bBR, bBL] },
-          { name: "left", poly: [fTL, fBL, bBL, bTL] }
+          { name: "front", poly: [boxItem.fTL, boxItem.fTR, boxItem.fBR, boxItem.fBL] },
+          { name: "top", poly: [boxItem.fTL, boxItem.fTR, boxItem.bTR, boxItem.bTL] },
+          { name: "right", poly: [boxItem.fTR, boxItem.fBR, boxItem.bBR, boxItem.bTR] },
+          { name: "bottom", poly: [boxItem.fBL, boxItem.fBR, boxItem.bBR, boxItem.bBL] },
+          { name: "left", poly: [boxItem.fTL, boxItem.fBL, boxItem.bBL, boxItem.bTL] }
         ];
         
-        // Filter out cloak and ascii_depth from side faces
-        const activeFiltersList = effectsList.filter(e => e !== "cloak" && e !== "ascii_depth");
+        // Filter out cloak from side faces
+        const activeFiltersList = effectsList.filter(e => e !== "cloak");
         
         // Render each face of the 3D box
         faces.forEach((face, fIdx) => {
           ctx.save();
-          ctx.globalAlpha = effectOpacity;
+          ctx.globalAlpha = opacity;
           
           // Clip rendering to this face's polygon path
           ctx.beginPath();
@@ -1421,7 +1491,7 @@ function startAppLoop() {
           // Other side faces get rotating effects shifted by pinchCycleCount!
           let faceEffect = selectedEffect;
           if (face.name !== "front") {
-            const effIdx = (fIdx - 1 + pinchCycleCount) % activeFiltersList.length;
+            const effIdx = (fIdx - 1 + boxItem.pinchCycleCount) % activeFiltersList.length;
             faceEffect = activeFiltersList[effIdx];
           }
           
@@ -1432,6 +1502,7 @@ function startAppLoop() {
           // Draw face borders/outline
           if (drawOutline) {
             ctx.save();
+            ctx.globalAlpha = opacity;
             ctx.beginPath();
             ctx.moveTo(face.poly[0].x, face.poly[0].y);
             for (let i = 1; i < face.poly.length; i++) {
@@ -1454,15 +1525,16 @@ function startAppLoop() {
         // Draw 3D wireframe connecting edges (connecting front and back faces)
         if (drawOutline) {
           ctx.save();
+          ctx.globalAlpha = opacity;
           ctx.strokeStyle = "rgba(236, 243, 158, 0.55)";
           ctx.lineWidth = 1.5;
           ctx.setLineDash([2, 3]); // dashed depth connector lines
           
           const corners = [
-            [fTL, bTL],
-            [fTR, bTR],
-            [fBR, bBR],
-            [fBL, bBL]
+            [boxItem.fTL, boxItem.bTL],
+            [boxItem.fTR, boxItem.bTR],
+            [boxItem.fBR, boxItem.bBR],
+            [boxItem.fBL, boxItem.bBL]
           ];
           
           corners.forEach(edge => {
@@ -1477,7 +1549,7 @@ function startAppLoop() {
           ctx.fillStyle = "#ffffff";
           ctx.shadowColor = "var(--accent-cyan)";
           ctx.shadowBlur = 10;
-          [fTL, fTR, fBR, fBL].forEach(pt => {
+          [boxItem.fTL, boxItem.fTR, boxItem.fBR, boxItem.fBL].forEach(pt => {
             ctx.beginPath();
             ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
             ctx.fill();
@@ -1487,11 +1559,11 @@ function startAppLoop() {
           ctx.fillStyle = "var(--accent-cyan)";
           ctx.font = "8px monospace";
           ctx.shadowBlur = 0;
-          ctx.fillText(`TL [${Math.round(fTL.x)},${Math.round(fTL.y)}]`, fTL.x - 45, fTL.y - 8);
-          ctx.fillText(`BR [${Math.round(fBR.x)},${Math.round(fBR.y)}]`, fBR.x + 10, fBR.y + 12);
+          ctx.fillText(`TL [${Math.round(boxItem.fTL.x)},${Math.round(boxItem.fTL.y)}]`, boxItem.fTL.x - 45, boxItem.fTL.y - 8);
+          ctx.fillText(`BR [${Math.round(boxItem.fBR.x)},${Math.round(boxItem.fBR.y)}]`, boxItem.fBR.x + 10, boxItem.fBR.y + 12);
           ctx.restore();
         }
-      }
+      });
     }
 
     // 4. Perform AI Object Detection & HUD overlays (Throttled for 60 FPS performance)
