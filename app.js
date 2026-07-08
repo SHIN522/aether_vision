@@ -41,7 +41,7 @@ let bgImageData = null;
 let selectedEffect = "cloak";
 let effectOpacity = 1.0;
 let drawOutline = true;
-let enableObjectDetection = true;
+let enableObjectDetection = false;
 let detectionThreshold = 0.3;
 
 // Pinch Gesture State
