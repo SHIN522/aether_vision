@@ -69,6 +69,12 @@ const offscreenCtx = offscreenCanvas.getContext("2d");
 offscreenCanvas.width = 320;
 offscreenCanvas.height = 180;
 
+// High-performance ML tracking buffer (640x360)
+const detectionCanvas = document.createElement("canvas");
+const detectionCtx = detectionCanvas.getContext("2d");
+detectionCanvas.width = 640;
+detectionCanvas.height = 360;
+
 // ==========================================================================
 // UI ELEMENTS REFERENCE
 // ==========================================================================
@@ -957,14 +963,16 @@ function drawASCIIDepthMap() {
       let isInsideObject = false;
       let objectLabel = "";
       if (enableObjectDetection && activeDetections.length > 0) {
+        const scaleX = outputCanvas.width / 640;
+        const scaleY = outputCanvas.height / 360;
         for (let i = 0; i < activeDetections.length; i++) {
           const det = activeDetections[i];
           const box = det.boundingBox;
           if (box) {
-            const bx = box.originX;
-            const by = box.originY;
-            const bw = box.width;
-            const bh = box.height;
+            const bx = box.originX * scaleX;
+            const by = box.originY * scaleY;
+            const bw = box.width * scaleX;
+            const bh = box.height * scaleY;
             if (cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh) {
               const cat = det.categories && det.categories[0];
               if (cat && cat.categoryName) {
@@ -1026,7 +1034,7 @@ function drawShader(effect) {
     if (isBgCaptured) {
       ctx.drawImage(backgroundCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
     } else {
-      ctx.fillStyle = "rgba(19, 42, 19, 0.95)";
+      ctx.fillStyle = "rgba(19, 42, 19, 0.48)";
       ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
       ctx.fillStyle = "var(--accent-cyan)";
       ctx.font = "14px 'Space Grotesk'";
@@ -1268,9 +1276,12 @@ function startAppLoop() {
     const timestamp = performance.now();
     handPolygon = null;
 
+    // Draw video to downscaled detection canvas for high-performance ML tracking
+    detectionCtx.drawImage(activeVideo, 0, 0, 640, 360);
+
     // 2. Perform Hand Tracking
     if (handLandmarker && isModelsLoaded) {
-      const handResults = handLandmarker.detectForVideo(activeVideo, timestamp);
+      const handResults = handLandmarker.detectForVideo(detectionCanvas, timestamp);
       
       if (handResults.landmarks && handResults.landmarks.length > 0) {
         let anyHandIsFist = false;
@@ -1491,7 +1502,7 @@ function startAppLoop() {
       if (timestamp - lastObjectDetectionTime > 120) {
         lastObjectDetectionTime = timestamp;
         try {
-          const detectResults = objectDetector.detectForVideo(activeVideo, timestamp);
+          const detectResults = objectDetector.detectForVideo(detectionCanvas, timestamp);
           activeDetections = detectResults.detections || [];
         } catch (e) {
           console.warn("Object detection skipped for frame: ", e);
@@ -1513,11 +1524,13 @@ function startAppLoop() {
             ctx.strokeStyle = "var(--accent-cyan)";
             ctx.lineWidth = 2;
             
-            // Corner indicators for cyberpunk HUD feel
-            const x = box.originX;
-            const y = box.originY;
-            const w = box.width;
-            const h = box.height;
+            // Scale bounding box from 640x360 detection size to full canvas size
+            const scaleX = outputCanvas.width / 640;
+            const scaleY = outputCanvas.height / 360;
+            const x = box.originX * scaleX;
+            const y = box.originY * scaleY;
+            const w = box.width * scaleX;
+            const h = box.height * scaleY;
             const len = Math.min(20, w * 0.2); // length of corner bars
 
             // Draw bounding rectangle
